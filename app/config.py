@@ -10,7 +10,7 @@ from app.core.settings_overrides import apply_overrides
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.7.1"
 
 
 def _generate_api_key() -> str:
