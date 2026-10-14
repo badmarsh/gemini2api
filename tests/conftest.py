@@ -24,6 +24,12 @@ os.environ.setdefault("USAGE_STATS_ENABLED", "false")
 os.environ.setdefault("CHAT_CLEANUP_ENABLED", "false")
 os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 
+# ConversationStore persists to $DATA_DIR/conversations (default ./data) and deletes entries
+# beyond its cap. Force a throwaway dir (not setdefault) before any `app.*` import so a test
+# run can never write into, or evict from, a developer's real data/ directory.
+import tempfile as _tempfile  # noqa: E402
+os.environ["DATA_DIR"] = _tempfile.mkdtemp(prefix="g2a-data-")
+
 import pytest
 
 TEST_API_KEY = os.environ["API_KEY"]
