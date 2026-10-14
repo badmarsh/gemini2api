@@ -114,6 +114,12 @@
 
 ### 🖥 Web Management Panel
 
+<div align="center">
+  <img src="../dashboard.png" alt="Gemini2API Admin Console - Usage Statistics" width="95%">
+</div>
+
+<br>
+
 - Chinese visual management interface with API Key authentication
 - Top-right control bar: theme toggle, service restart, logout
 - Dashboard: real-time uptime counter, QR code cards (image zoom support), system info (version/Python/OS/memory/CPU/PID/mode), config management, account status overview, available models list

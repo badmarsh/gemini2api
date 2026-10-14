@@ -114,6 +114,12 @@
 
 ### 🖥 Web 管理面板
 
+<div align="center">
+  <img src="../dashboard.png" alt="Gemini2API 管理面板 - 用量统计与 Gemini 4 Argon 分布" width="95%">
+</div>
+
+<br>
+
 - 中文可视化管理界面，API Key 登录认证
 - 右上角控制栏：主题切换、服务重启、登出
 - 仪表盘：运行时间实时计时、二维码卡片（支持图片放大）、系统信息（版本/Python/OS/内存/CPU/PID/运行模式）、配置管理（轮换策略/并发上限）、账号状态总览、可用模型列表

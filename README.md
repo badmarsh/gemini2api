@@ -271,10 +271,17 @@ Upstream collapsed multi-turn prompts into just the latest single user message w
 
 ---
 
-## 🌟 Core Features
+## 🌟 Core Features & Admin Dashboard
 
+<div align="center">
+  <img src="docs/dashboard.png" alt="Gemini2API Admin Console - Usage Statistics and Gemini 4 Argon Distribution" width="95%">
+</div>
+
+<br>
+
+- **Web Admin Console & Metrics**: Built-in visual dashboard (`http://localhost:5918`) providing real-time statistics, request volume, error rates, average latency tracking, and model distribution breakdown (demonstrating real-world `gemini-4-argon` extended thinking latency).
 - **Triple Protocol Compatibility**: Simultaneous support for OpenAI (`/v1/chat/completions`), Anthropic Claude (`/v1/messages`), and Gemini Native (`/v1beta/models/...`).
-- **Web Admin Dashboard**: Real-time monitoring of account statuses, model testing playground, error history, and dynamic settings.
+- **Interactive Playground**: Test streaming responses, reasoning traces, and function calling directly within the browser.
 - **TLS Fingerprint Impersonation**: Uses `curl_cffi` with Chrome 124+ TLS signatures to avoid bot detection.
 - **Automatic Quota & Health Tracking**: Tracks per-account error rates and automatically cycles unhealthy or rate-limited accounts.
 - **Zero Official Key Requirement**: Uses standard Google web sessions without Google Cloud billing dependencies.
