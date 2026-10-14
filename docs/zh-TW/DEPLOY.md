@@ -52,7 +52,7 @@ Gemini2API 需要有效的 Google Gemini Cookie 才能運作。按照以下步�
 
 ```bash
 # 複製倉庫
-git clone https://github.com/xwteam/gemini2api.git
+git clone https://github.com/badmarsh/gemini2api.git
 cd gemini2api
 
 # 複製環境範本

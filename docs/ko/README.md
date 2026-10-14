@@ -188,7 +188,7 @@
 
 ```bash
 # 저장소 복제
-git clone https://github.com/xwteam/gemini2api.git
+git clone https://github.com/badmarsh/gemini2api.git
 cd gemini2api
 
 # 환경 변수 파일 생성

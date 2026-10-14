@@ -189,7 +189,7 @@
 
 ```bash
 # 複製倉庫
-git clone https://github.com/xwteam/gemini2api.git
+git clone https://github.com/badmarsh/gemini2api.git
 cd gemini2api
 
 # 建立環境變數檔案

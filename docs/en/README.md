@@ -166,7 +166,7 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/xwteam/gemini2api.git
+git clone https://github.com/badmarsh/gemini2api.git
 cd gemini2api
 
 # Create environment file

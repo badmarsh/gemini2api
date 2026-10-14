@@ -66,7 +66,7 @@ Gemini2API 서비스를 배포하는 방법을 상세히 설명합니다.
 
 ```bash
 # 1. 저장소 복제
-git clone https://github.com/xwteam/gemini2api.git
+git clone https://github.com/badmarsh/gemini2api.git
 cd gemini2api
 
 # 2. 환경 변수 템플릿 복사

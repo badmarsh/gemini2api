@@ -51,7 +51,7 @@ Gemini2API を動作させるには、Google アカウントの Cookie が必要
 ### ステップ 1: リポジトリをクローン
 
 ```bash
-git clone https://github.com/xwteam/gemini2api.git
+git clone https://github.com/badmarsh/gemini2api.git
 cd gemini2api
 ```
 

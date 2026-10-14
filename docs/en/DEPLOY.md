@@ -52,7 +52,7 @@ Gemini2API requires valid Google Gemini cookies to function. Follow these steps 
 
 ```bash
 # Clone the repository
-git clone https://github.com/xwteam/gemini2api.git
+git clone https://github.com/badmarsh/gemini2api.git
 cd gemini2api
 
 # Copy environment template

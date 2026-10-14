@@ -66,7 +66,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/xwteam/gemini2api.git
+git clone https://github.com/badmarsh/gemini2api.git
 cd gemini2api
 
 # 2. 复制环境变量模板
