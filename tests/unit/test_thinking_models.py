@@ -23,15 +23,14 @@ def test_model_number_helper_resolves_public_names():
 import json
 from app.core.gemini_client import GeminiWebClient, _build_model_header_thinking, MODEL_HEADER_KEY
 
-def test_thinking_header_17_elements():
+def test_thinking_header_15_elements():
     h = _build_model_header_thinking("gemini-flash", "SESSION-UUID-1")
     arr = json.loads(h[MODEL_HEADER_KEY])
-    assert len(arr) == 17
+    assert len(arr) == 15
     assert arr[4] == "56fdd199312815e2" or arr[4] == "fbb127bbb056c959"  # flash id (family)
     assert arr[8] == [4, 5, 6, 8]
-    assert arr[14] == 1            # model_number for flash
-    assert arr[15] == 2            # extended-thinking flag
-    assert arr[16] == "SESSION-UUID-1"
+    assert arr[11] == 1           # thinking indicator flag
+    assert arr[14] == 1           # model capability flag
 
 def test_thinking_payload_81_elements_and_flags():
     c = GeminiWebClient.__new__(GeminiWebClient)

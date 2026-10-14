@@ -176,7 +176,7 @@ def _run(frames, tmp_path: Path, **opts) -> dict:
     script.write_text(_harness(), encoding="utf-8")
     proc = subprocess.run(
         [_NODE, str(script), json.dumps({"frames": frames, "opts": opts})],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert proc.returncode == 0, f"node 执行失败:\n{proc.stderr}"
     return json.loads(proc.stdout)

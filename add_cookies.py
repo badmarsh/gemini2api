@@ -4,22 +4,22 @@ import requests
 import sys
 import os
 
-# 设置代理服务器地址
+# Gateway server address
 BASE_URL = "http://localhost:5918"
 
 def add_cookies(account_id, psid, psidts):
     """
-    添加 cookies 到指定账户
+    Add or update cookies for the specified account via Admin API.
     """
     url = f"{BASE_URL}/admin/accounts/{account_id}/cookies"
     
-    # 构造请求体
+    # Construct request payload
     payload = {
         "psid": psid,
         "psidts": psidts
     }
     
-    # 发送 PUT 请求
+    # Send PUT request
     try:
         response = requests.put(url, json=payload)
         print(f"Status Code: {response.status_code}")

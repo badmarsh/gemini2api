@@ -8,7 +8,7 @@
 
 A reverse proxy for Google Gemini Web with native **Gemini 4 Argon** reasoning support, automated multi-account failover, and multi-turn context retention for coding agents. Compatible with OpenAI, Claude, and Gemini SDKs.
 
-[Quickstart](#-quickstart) &bull; [Agent Setup](#-agent-setup) &bull; [Architecture](#-technical-deep-dive) &bull; [API Endpoints](#-api-endpoints) &bull; [Docs in 简体中文](docs/zh-CN/README.md)
+[Dashboard](#-core-features--admin-dashboard) &bull; [Quickstart](#-tutorial--quickstart) &bull; [Agent Setup](#-autonomous-agent-setup) &bull; [Architecture](#-technical-architecture--deep-dive) &bull; [API Endpoints](#-api-endpoints-reference) &bull; [Docs in Chinese](docs/zh-CN/README.md)
 
 </div>
 
@@ -26,6 +26,23 @@ A reverse proxy for Google Gemini Web with native **Gemini 4 Argon** reasoning s
 | **OpenAI `developer` Role** | Unhandled | Mapped to `System: <content>` |
 | **Account Pool Startup** | Simultaneous requests hit `identity.hfcr` | 4s inter-account startup delay |
 | **Admin Cookie Reload** | Status stayed degraded | Resets failure counters, marks `ACTIVE`, and persists immediately |
+
+---
+
+## 🌟 Core Features & Admin Dashboard
+
+<div align="center">
+  <img src="docs/dashboard.png" alt="Gemini2API Admin Console - Usage Statistics and Gemini 4 Argon Distribution" width="95%">
+</div>
+
+<br>
+
+- **Web Admin Console & Metrics**: Built-in visual dashboard (`http://localhost:5918`) providing real-time statistics, request volume, error rates, average latency tracking, and model distribution breakdown (demonstrating real-world `gemini-4-argon` extended thinking latency).
+- **Triple Protocol Compatibility**: Simultaneous support for OpenAI (`/v1/chat/completions`), Anthropic Claude (`/v1/messages`), and Gemini Native (`/v1beta/models/...`).
+- **Interactive Playground**: Test streaming responses, reasoning traces, and function calling directly within the browser.
+- **TLS Fingerprint Impersonation**: Uses `curl_cffi` with Chrome 124+ TLS signatures to avoid bot detection.
+- **Automatic Quota & Health Tracking**: Tracks per-account error rates and automatically cycles unhealthy or rate-limited accounts.
+- **Zero Official Key Requirement**: Uses standard Google web sessions without Google Cloud billing dependencies.
 
 ---
 
@@ -231,23 +248,6 @@ A chronic issue with Gemini reverse proxies has been the "168-byte stall," where
 
 ### 4. Multi-Turn Context Retention for Agents
 Upstream collapsed multi-turn prompts into just the latest single user message when `gemini_conv_id` was active. For coding agents that maintain conversation state locally across iterations, this caused prompt amnesia and failed multi-round tasks whenever account failover occurred. This fork detects multi-turn history (`len(messages) > 1`) and preserves the full formatted conversation.
-
----
-
-## 🌟 Core Features & Admin Dashboard
-
-<div align="center">
-  <img src="docs/dashboard.png" alt="Gemini2API Admin Console - Usage Statistics and Gemini 4 Argon Distribution" width="95%">
-</div>
-
-<br>
-
-- **Web Admin Console & Metrics**: Built-in visual dashboard (`http://localhost:5918`) providing real-time statistics, request volume, error rates, average latency tracking, and model distribution breakdown (demonstrating real-world `gemini-4-argon` extended thinking latency).
-- **Triple Protocol Compatibility**: Simultaneous support for OpenAI (`/v1/chat/completions`), Anthropic Claude (`/v1/messages`), and Gemini Native (`/v1beta/models/...`).
-- **Interactive Playground**: Test streaming responses, reasoning traces, and function calling directly within the browser.
-- **TLS Fingerprint Impersonation**: Uses `curl_cffi` with Chrome 124+ TLS signatures to avoid bot detection.
-- **Automatic Quota & Health Tracking**: Tracks per-account error rates and automatically cycles unhealthy or rate-limited accounts.
-- **Zero Official Key Requirement**: Uses standard Google web sessions without Google Cloud billing dependencies.
 
 ---
 

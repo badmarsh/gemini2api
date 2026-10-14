@@ -284,9 +284,9 @@ async def chat_completions(req: ChatRequest, request: Request):
         if conv and conv.gemini_conv_id:
             gemini_conv_id = conv.gemini_conv_id
 
-    # 如果有有效的 gemini_conv_id 且客户端只传了单轮消息（依赖服务端维持状态），只发最新一条用户消息
-    # 如果客户端携带了多轮历史（如 OpenAI SDK / Codex 客户端），优先保留完整上下文并清空 gemini_conv_id，避免跨账号会话失效
-    if gemini_conv_id and len(messages_raw) <= 1:
+    # 如果有有效的 gemini_conv_id，只发最新一条用户消息（服务端会话继续）
+    # 当客户端未传 conversation_id 时（如 OpenAI SDK / Codex / 编程 Agent），gemini_conv_id 为空，保留完整多轮上下文
+    if gemini_conv_id and messages_raw:
         last_user_msg = ""
         for msg in reversed(messages_raw):
             if msg.get("role") == "user":

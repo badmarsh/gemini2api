@@ -8,17 +8,17 @@ import sys
 import os
 import json
 
-# 设置代理服务器地址
+# Gateway server address
 BASE_URL = "http://localhost:5918"
 
 def add_cookies_to_account(account_id, psid, psidts):
     """
-    添加 cookies 到指定账户
+    Add or update cookies for the specified account via Admin API.
     """
-    # 构造请求URL
+    # Construct request URL
     url = f"{BASE_URL}/admin/accounts/{account_id}/cookies"
     
-    # 构造请求体
+    # Construct request payload
     payload = {
         "psid": psid,
         "psidts": psidts
@@ -27,7 +27,7 @@ def add_cookies_to_account(account_id, psid, psidts):
     # Read API key from environment variable or prompt
     api_key = os.environ.get("API_KEY", "")
     
-    # 设置请求头
+    # Set request headers
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -43,7 +43,7 @@ def add_cookies_to_account(account_id, psid, psidts):
     print("   - If you get a 503 error about 'Cookie expired', you need new cookies")
     
     try:
-        # 发送 PUT 请求
+        # Send PUT request
         response = requests.put(url, json=payload, headers=headers)
         print(f"\nStatus Code: {response.status_code}")
         print(f"Response: {response.text}")

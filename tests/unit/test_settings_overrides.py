@@ -483,6 +483,7 @@ def test_rollback_deletes_an_overrides_file_that_did_not_exist_before(client, di
     assert settings.log_bodies_enabled is False
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory permissions not enforced by chmod on Windows")
 def test_readonly_data_dir_leaves_env_and_memory_untouched(client, disk_layers):
     """data/ 不可写 → 500，.env 与内存都回到请求前。"""
     object.__setattr__(settings, "max_retries", 3)
