@@ -70,7 +70,7 @@ function bindEvents(switcher) {
 
             dropdown.classList.remove('show');
 
-            // 触发当前页面数据重新加载（无感刷新动态内容）
+            // Trigger current page reload to refresh dynamic content
             if (window.app && window.app.reloadCurrentSection) {
                 window.app.reloadCurrentSection();
             }

@@ -149,14 +149,14 @@ function renderTable(records) {
     tbody.innerHTML = records.map(r => {
         const t = new Date(r.ts);
         const time = t.toLocaleTimeString();
-        const dirLabel = r.direction === 'ingress' ? '入站' : '出站';
+        const dirLabel = r.direction === 'ingress' ? (t('logs.ingress') || 'Ingress') : (t('logs.egress') || 'Egress');
         const dirClass = 'badge-' + r.direction;
         const statusClass = getStatusClass(r.status);
         const latency = r.latency_ms ? Math.round(r.latency_ms) + 'ms' : '-';
         const selected = r.id === selectedRecordId ? ' selected' : '';
 
-        // 安全：r.path/r.method/r.model 等字段来自真实 HTTP 请求（攻击者可控），
-        // 渲染前一律 escapeHtml 转义，防止存储型 XSS（如 path 内的 <svg onload=...>）。
+        // Security: r.path/r.method/r.model come from HTTP requests (user-controlled);
+        // escape before rendering to prevent stored XSS (e.g. <svg onload=...> in path).
         return '<tr class="log-row' + selected + '" data-id="' + escapeHtml(String(r.id ?? '')) + '">'
             + '<td>' + escapeHtml(time) + '</td>'
             + '<td><span class="badge ' + dirClass + '">' + escapeHtml(dirLabel) + '</span></td>'

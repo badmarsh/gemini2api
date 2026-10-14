@@ -1,13 +1,13 @@
 /**
- * 工具函数模块
+ * Utility functions module
  */
 
 import { getCurrentLanguage, t } from './i18n.js';
 
 /**
- * 遮蔽敏感字符串
- * @param {string} str - 原始字符串
- * @param {number} showChars - 显示的字符数
+ * Mask sensitive string
+ * @param {string} str - Original string
+ * @param {number} showChars - Number of characters to show
  * @returns {string}
  */
 function maskString(str, showChars = 10) {
@@ -17,8 +17,8 @@ function maskString(str, showChars = 10) {
 }
 
 /**
- * 格式化数字
- * @param {number} num - 数字
+ * Format number with locale
+ * @param {number} num - Number
  * @returns {string}
  */
 function formatNumber(num) {
@@ -27,8 +27,8 @@ function formatNumber(num) {
 }
 
 /**
- * 获取状态徽章HTML
- * @param {string} status - 状态
+ * Get status badge HTML
+ * @param {string} status - Status
  * @returns {string}
  */
 function getStatusBadge(status) {
@@ -45,8 +45,8 @@ function getStatusBadge(status) {
 }
 
 /**
- * 格式化日期
- * @param {string} isoString - ISO日期字符串
+ * Format date
+ * @param {string} isoString - ISO date string
  * @returns {string}
  */
 function formatDate(isoString) {
@@ -67,9 +67,9 @@ function formatDate(isoString) {
 }
 
 /**
- * 复制文本到剪贴板
- * @param {string} text - 要复制的文本
- * @returns {Promise<void>}
+ * Copy text to clipboard
+ * @param {string} text - Text to copy
+ * @returns {Promise<boolean>}
  */
 async function copyToClipboard(text) {
     try {
@@ -87,18 +87,18 @@ async function copyToClipboard(text) {
         }
         return true;
     } catch (error) {
-        console.error('复制失败:', error);
+        console.error('Failed to copy:', error);
         return false;
     }
 }
 
 /**
- * 显示Toast通知
- * @param {string} message - 消息内容
- * @param {string} type - 消息类型: 'success', 'error', 'warning', 'info'
+ * Display toast notification
+ * @param {string} message - Message content
+ * @param {string} type - Message type: 'success', 'error', 'warning', 'info'
  */
 function showToast(message, type = 'info') {
-    // 复用页面已有容器（index.html 提供 #toastContainer），否则按需创建；标记 aria-live 实时区供读屏播报
+    // Reuse existing container (#toastContainer in index.html) or create as needed; aria-live for screen readers
     let toastContainer = document.getElementById('toastContainer') || document.getElementById('toast-container');
     if (!toastContainer) {
         toastContainer = document.createElement('div');
@@ -136,20 +136,20 @@ function showToast(message, type = 'info') {
 
     toastContainer.appendChild(toast);
 
-    // 触发动画
+    // Trigger animation
     setTimeout(() => {
         toast.classList.add('show');
     }, 10);
 
-    // 自动消失（悬停暂停，给读者更多阅读时间）
+    // Auto dismiss (pause on hover)
     let timer = setTimeout(dismiss, 4000);
     toast.addEventListener('mouseenter', () => clearTimeout(timer));
     toast.addEventListener('mouseleave', () => { timer = setTimeout(dismiss, 2000); });
 }
 
 /**
- * 转义HTML特殊字符
- * @param {string} str - 原始字符串
+ * Escape HTML special characters
+ * @param {string} str - Raw string
  * @returns {string}
  */
 function escapeHtml(str) {
@@ -160,8 +160,8 @@ function escapeHtml(str) {
 }
 
 /**
- * 格式化文件大小
- * @param {number} bytes - 字节数
+ * Format file size
+ * @param {number} bytes - Size in bytes
  * @returns {string}
  */
 function formatFileSize(bytes) {
@@ -173,9 +173,9 @@ function formatFileSize(bytes) {
 }
 
 /**
- * 防抖函数
- * @param {Function} func - 要防抖的函数
- * @param {number} wait - 等待时间（毫秒）
+ * Debounce function
+ * @param {Function} func - Function to debounce
+ * @param {number} wait - Wait time in milliseconds
  * @returns {Function}
  */
 function debounce(func, wait) {
@@ -191,9 +191,9 @@ function debounce(func, wait) {
 }
 
 /**
- * 节流函数
- * @param {Function} func - 要节流的函数
- * @param {number} limit - 时间限制（毫秒）
+ * Throttle function
+ * @param {Function} func - Function to throttle
+ * @param {number} limit - Time limit in milliseconds
  * @returns {Function}
  */
 function throttle(func, limit) {
@@ -207,8 +207,8 @@ function throttle(func, limit) {
     };
 }
 
-function showConfirm({ title = '确认操作', message = '', confirmText = '确认', cancelText = '取消', type = 'warning' }) {
-    // 注：title/message/confirmText/cancelText 在下方模板内统一经 escapeHtml 转义一次（防 XSS）
+function showConfirm({ title = 'Confirm Action', message = '', confirmText = 'Confirm', cancelText = 'Cancel', type = 'warning' }) {
+    // Note: title/message/confirmText/cancelText are escaped via escapeHtml in the template below (XSS defense)
     return new Promise((resolve) => {
         const iconMap = { warning: 'fa-exclamation-triangle', danger: 'fa-trash-alt', info: 'fa-info-circle' };
         const colorMap = { warning: 'var(--warning-color, #f59e0b)', danger: 'var(--danger-color)', info: 'var(--primary-color)' };
@@ -220,7 +220,7 @@ function showConfirm({ title = '确认操作', message = '', confirmText = '确�
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay active';
         overlay.style.bottom = '0';
-        // a11y：对话框语义 + 标题/正文关联；XSS：title/message/按钮文案一律转义
+        // a11y: dialog semantics and labelling; XSS: escaped text
         overlay.innerHTML = `
             <div role="dialog" aria-modal="true" aria-labelledby="${uid}-t" aria-describedby="${uid}-m" style="background:var(--bg-primary);border-radius:var(--radius-xl,16px);width:90%;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,0.3);animation:modalIn 0.2s ease">
                 <div style="padding:2rem;text-align:center">
@@ -245,7 +245,7 @@ function showConfirm({ title = '确认操作', message = '', confirmText = '确�
                 e.preventDefault();
                 close(false);
             } else if (e.key === 'Tab') {
-                // 双按钮焦点陷阱：Tab 在取消/确认间循环，不逸出对话框
+                // Focus trap between Cancel and Confirm buttons
                 e.preventDefault();
                 const order = [cancelBtn, okBtn];
                 const idx = order.indexOf(document.activeElement);
@@ -276,7 +276,7 @@ function showConfirm({ title = '确认操作', message = '', confirmText = '确�
     });
 }
 
-// 导出函数
+// Export functions
 export {
     maskString,
     formatNumber,

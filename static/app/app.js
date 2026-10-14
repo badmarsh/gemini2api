@@ -1,5 +1,5 @@
 /**
- * Gemini2API 管理面板 - 主应用入口
+ * Gemini2API Admin Panel - Main Application Entry
  */
 
 import { initializeComponents } from './component-loader.js';
@@ -94,7 +94,7 @@ async function loadSectionData(sectionId) {
                 break;
         }
     } catch (error) {
-        console.error(`加载${sectionId}数据失败:`, error);
+        console.error(`Failed to load ${sectionId} data:`, error);
     }
 }
 
@@ -141,7 +141,7 @@ async function loadDashboard() {
             checkForUpdate();
         }
     } catch (error) {
-        console.error('加载仪表盘失败:', error);
+        console.error('Failed to load dashboard:', error);
     }
 }
 
@@ -178,7 +178,7 @@ async function loadSystemInfo() {
             startUptimeTimer(data.uptime_seconds);
         }
     } catch (error) {
-        console.error('加载系统信息失败:', error);
+        console.error('Failed to load system info:', error);
     }
 }
 
@@ -191,9 +191,7 @@ async function loadQrCards() {
         const resp = await fetch(`${QR_REMOTE_BASE}/qr-config.json`);
         if (!resp.ok) return;
         const config = await resp.json();
-        // 安全：qr-config.json 来自第三方 GitHub 源（可被篡改/MITM），title/description/image
-        // 一律转义后再拼入 innerHTML；image 仅取相对路径片段并 encodeURIComponent，
-        // 同时对属性值用 escapeAttr 防止双引号逸出注入事件属性。
+        // Security: qr-config.json may come from external sources; escape title/description/image
         container.innerHTML = (config.cards || []).map(card => `
             <div class="qr-card">
                 <p class="qr-title">${escapeHtml(card.title)}</p>
@@ -202,7 +200,7 @@ async function loadQrCards() {
             </div>
         `).join('');
     } catch (e) {
-        console.error('加载二维码配置失败:', e);
+        console.error('Failed to load QR configuration:', e);
     }
 }
 
@@ -227,15 +225,13 @@ function initLightbox() {
     if (closeBtn) closeBtn.addEventListener('click', closeLightbox);
 }
 
-// 账号卡片上的健康提示（纯函数，无 DOM 依赖，可被 node 直接跑）。
-// issue #11 的教训：status 只有连挂 3 次或撞 401/403 才会变 EXPIRED，所以 cookie 已经
-// 死透的账号在面板上照样绿着 ACTIVE；Requests/Errors/Models 也都没有鉴别力。
-// 这里把后端真正的健康位和连续失败数摆出来，"绿着但已经死了"一眼可见。
-// 返回 null 表示没什么好说的（健康且无连续失败），此时卡片不加任何噪音。
+// Health badge on account card (pure function).
+// Exposes real session health and consecutive failures to make degraded accounts visible.
+// Returns null when healthy with no failures to avoid cluttering cards.
 function _accountHealthNote(account) {
     if (!account) return null;
     if (account.is_healthy === false) {
-        // 后端说会话不健康，但状态还标着 active —— 这正是面板骗人的那一格
+        // Session unhealthy while status still marked active
         return {
             cls: account.status === 'active' ? 'text-danger' : 'text-muted',
             text: account.status === 'active'
@@ -250,12 +246,12 @@ function _accountHealthNote(account) {
     return null;
 }
 
-// 与后端 app/core/account_pool.EMPTY_STREAK_THRESHOLD 对齐：连续空到这个数才算真的坏了
+// Aligned with app/core/account_pool.EMPTY_STREAK_THRESHOLD: streak required before marking broken
 const EMPTY_STREAK_THRESHOLD = 3;
 
-// 空响应提示（纯函数）。上游 HTTP 200 却一个字都没吐的次数，过去被当成成功，
-// 面板上 Errors 纹丝不动 —— "每次都吐空"的账号完全看不出来（issue #11）。
-// 从没空过就返回 null，不给正常账号添噪音。
+// Empty response indicator (pure function).
+// Tracks upstream HTTP 200 responses with empty bodies that would otherwise pass unnoticed.
+// Returns null if account has never emitted an empty response.
 function _accountEmptyNote(account) {
     const total = Number(account?.empty_count) || 0;
     if (total <= 0) return null;
@@ -266,7 +262,7 @@ function _accountEmptyNote(account) {
     };
 }
 
-// 空响应渲染成一行 account-detail；无提示时返回空串。
+// Render empty response detail row; returns empty string if no warning.
 function _accountEmptyRow(account) {
     const note = _accountEmptyNote(account);
     if (!note) return '';
@@ -277,19 +273,15 @@ function _accountEmptyRow(account) {
             </div>`;
 }
 
-// 最近错误的展示文本：错误摘要 + 发生时间。
-// release(success=True) 只清 consecutive_failures / consecutive_empty，从不清 last_error，
-// 所以三周前撞过一次 503 的账号今天仍然稳定显示那行字。不带时间的话运维会照着这条陈年旧账
-// 去查根因 —— 正是 issue #11 要根治的"面板说了一句没有鉴别力的话"。
-// 后端 get_status() 已经导出 last_error_at，这里把它渲染出来。
+// Display text for recent error: error summary + timestamp.
+// Renders last_error_at from get_status() to differentiate stale errors from current issues.
 function _accountLastErrorText(account) {
     const msg = escapeHtml(String(account?.last_error ?? ''));
     if (!account?.last_error_at) return msg;
     return `${msg} (${escapeHtml(formatDate(account.last_error_at))})`;
 }
 
-// 健康提示渲染成一行 account-detail；无提示时返回空串（不占位）。
-// 注意：note.text 里可能拼进后端来的数字，统一走 escapeHtml。
+// Render health note row; returns empty string if healthy. Values are escaped via escapeHtml.
 function _accountHealthRow(account) {
     const note = _accountHealthNote(account);
     if (!note) return '';
@@ -309,7 +301,7 @@ function renderAccountStatusGrid(accounts) {
         return;
     }
 
-    // 安全：account.label 来自添加账号表单（后端逐字存储，无过滤），作为文本内容渲染前转义，防止存储型 XSS
+    // Security: escape account.label before rendering to prevent stored XSS
     container.innerHTML = accounts.map(account => `
         <div class="provider-card">
             <div class="provider-card-header">
@@ -350,8 +342,8 @@ function renderModelsList(modelsSet) {
         return;
     }
 
-    // 安全：不再把 model 拼进 onclick 单引号 JS 字符串（escapeHtml 不转义单引号，无法防逸出），
-    // 改用 data-model 属性 + addEventListener，model 经 escapeAttr/escapeHtml 转义后写入
+    // Security: use data-model attribute + addEventListener instead of inline onclick JS strings;
+    // model is escaped via escapeAttr/escapeHtml
     container.innerHTML = models.map(model => `
         <span class="model-tag" data-model="${escapeAttr(model)}">
             <i class="fas fa-cube"></i> ${escapeHtml(model)}
@@ -372,7 +364,7 @@ function updatePlaygroundModels(modelsSet) {
         return;
     }
 
-    // 安全：model 转义后再拼入 option 的 value 属性与文本内容，防止属性逸出/标签注入
+    // Security: escape model before inserting into option value and text content
     select.innerHTML = models.map(model =>
         `<option value="${escapeAttr(model)}">${escapeHtml(model)}</option>`
     ).join('');
@@ -402,10 +394,8 @@ async function loadAccounts() {
             return;
         }
 
-        // 安全：account.label 用户可控且持久化；id/label 既作为文本（escapeHtml）也进入按钮的
-        // data-* 属性（escapeAttr）。关键修复：原 onclick 把 label 拼进单引号 JS 字符串，
-        // escapeHtml 不转义单引号无法防逸出，故改为 data-account-id/data-account-label +
-        // addEventListener，使用户数据不再出现在属性内的 JS 字符串字面量里。
+        // Security: account.label is user-controlled; id/label are escaped for text (escapeHtml)
+        // and attributes (escapeAttr). Uses data-* attributes + addEventListener to avoid inline JS strings.
         container.innerHTML = accounts.map(account => {
             const idEsc = escapeAttr(account.id);
             const labelEsc = escapeAttr(account.label || '');
@@ -459,7 +449,7 @@ async function loadAccounts() {
         `;
         }).join('');
 
-        // 通过 dataset 取回原始（已解码）值绑定事件，避免用户数据出现在 inline JS 字符串里
+        // Bind events via dataset to prevent user data in inline JS strings
         container.querySelectorAll('.acc-check-btn').forEach(btn => {
             btn.addEventListener('click', () => checkAccount(btn.dataset.accountId));
         });
@@ -470,7 +460,7 @@ async function loadAccounts() {
             btn.addEventListener('click', () => removeAccount(btn.dataset.accountId));
         });
     } catch (error) {
-        console.error('加载账号列表失败:', error);
+        console.error('Failed to load accounts:', error);
     }
 }
 
@@ -600,9 +590,9 @@ async function submitUpdateCookie() {
 
 let _pgConversationId = '';
 let _pgMessages = [];
-let _pgImages = [];  // 待发送的图片 [{dataUrl, name}]
+let _pgImages = [];  // Images pending upload [{dataUrl, name}]
 
-// 与后端 app/utils/tools.py 对齐，用于生图等待态 UI
+// Aligned with backend app/utils/tools.py, used for image generation waiting state UI
 const _PG_IMAGE_INTENT_PATTERNS = [
     '画一', '画个', '画张', '画幅', '画副', '帮我画', '给我画', '画图', '画一张', '画一幅',
     '画个图', '画张图', '画幅图', '画一只', '画只', '画头', '画条',
@@ -677,16 +667,14 @@ function _pgFormatPlaygroundError(error, status) {
     return `${t('playground.requestFailed')} (${status || 'unknown'})`;
 }
 
-// SSE 帧分类（纯函数，无 DOM 依赖，可被 node 直接跑）。
-// 后端出错时发的是顶层 {"error":{message,type,code}} 帧（app/routers/openai.py::_err_chunk），
-// 它没有 choices —— 旧代码只读 chunk.choices[0].delta，于是 503/529/500/400 全部被静默吃掉，
-// 最后一律渲染成"无响应内容"，真实原因彻底丢失（issue #11）。
+// Classify SSE frame (pure function).
+// Handles top-level {"error":{message,type,code}} frames from backend without choices.
 function _pgClassifyChunk(chunk) {
     if (chunk && typeof chunk === 'object' && chunk.error && typeof chunk.error === 'object') {
         return {
             kind: 'error',
             message: chunk.error.message == null ? '' : String(chunk.error.message),
-            // responses/gemini/claude 路由的 error 帧没有 code，必须容忍 undefined/null
+            // Error frames on responses/gemini/claude routes may omit code; tolerate undefined/null
             code: chunk.error.code == null ? null : chunk.error.code
         };
     }
@@ -700,10 +688,8 @@ function _pgClassifyChunk(chunk) {
     };
 }
 
-// error 帧 → 给用户看的一行文本（纯函数）。
-// message 是上游 str(exc) 原文，完全不可信：这里只做长度钳制与空白折叠，
-// 转义由调用方用 textContent 承担（绝不进 innerHTML，更不能进 _pgRenderContent —— 后者会把
-// 文本里的图片 URL 还原成 <img>）。
+// Extract display text from error frame (pure function).
+// Clamps length and collapses whitespace; callers must render via textContent.
 const _PG_ERR_MAX = 500;
 function _pgFormatStreamError(err) {
     const raw = String(err?.message ?? '').replace(/\s+/g, ' ').trim();
@@ -714,12 +700,11 @@ function _pgFormatStreamError(err) {
     return msg ? `${head}: ${msg}` : head;
 }
 
-// 流收尾后决定气泡最终呈现（纯函数）。四种结果：
-//   'error'         —— 出错且一个字都没流出来：整条替换成错误文本
-//   'partial-error' —— 已经流出内容后才出错：保留已收到的内容，错误追加在末尾（绝不抹掉）
-//   'empty'         —— 无内容也无错误：合法空响应（只有思考链 / 占位被过滤 / 上游 200 空体），
-//                      沿用"无响应内容"，不伪造错误
-//   'content'       —— 正常
+// Finalize streaming bubble display (pure function):
+//   "error"         - Error before any content streamed: replace entire bubble with error
+//   "partial-error" - Error after partial content streamed: preserve content and append error
+//   "empty"         - No content and no error: valid empty response
+//   "content"       - Normal completed stream
 function _pgStreamOutcome(content, streamError) {
     if (streamError) {
         return {
@@ -732,8 +717,7 @@ function _pgStreamOutcome(content, streamError) {
     return { mode: 'content', content, errorText: '' };
 }
 
-// 上游错误文本一律走 textContent 构建 DOM，天然免疫注入；不用 innerHTML 模板串，
-// 免得日后有人顺手把 message 挪进属性上下文（escapeHtml 不转义引号）。
+// Construct error DOM via textContent to prevent HTML injection.
 function _pgErrorSpan(text) {
     const span = document.createElement('span');
     span.className = 'text-danger';
@@ -767,7 +751,7 @@ async function sendPlaygroundRequest() {
 
     const isImageGen = _pgMaybeImageGenerationIntent(message);
 
-    // 组装多模态 content：有图片时用数组格式，纯文本保持字符串
+    // Assemble multimodal content: use array format when images are present, string for plain text
     let userContent;
     if (_pgImages.length > 0) {
         userContent = [];
@@ -884,8 +868,7 @@ async function sendPlaygroundRequest() {
                     const chunk = JSON.parse(data);
                     const info = _pgClassifyChunk(chunk);
                     if (info.kind === 'error') {
-                        // 记下来，但不中断循环：错误帧后面紧跟 [DONE]，收尾时统一渲染，
-                        // 这样已经流出的内容也能原样保住。
+// Record error without breaking loop: error frames are followed by [DONE], finalized on completion so streamed content is preserved.
                         streamError = info;
                         continue;
                     }
@@ -914,13 +897,12 @@ async function sendPlaygroundRequest() {
         const outcome = _pgStreamOutcome(content, streamError);
         _pgClearGeneratingState(aiMsg, aiBubble);
         if (outcome.mode === 'error') {
-            // 一个字都没收到：这一轮没有助手回复，把用户消息弹回去（与 !resp.ok / catch 分支一致），
-            // 否则下一轮会重复发送一条没有应答的孤儿消息。
+// No content received: remove unresponded user turn to avoid orphan messages.
             _pgMessages.pop();
             aiBubble.textContent = '';
             aiBubble.appendChild(_pgErrorSpan(outcome.errorText));
         } else if (outcome.mode === 'partial-error') {
-            // 已收到的内容照常渲染，错误只做追加 —— 绝不把用户已经看到的正文抹掉
+            // Render received content and append error, never discarding already received text
             aiBubble.innerHTML = _pgRenderContent(outcome.content);
             aiBubble.appendChild(document.createElement('br'));
             aiBubble.appendChild(_pgErrorSpan(outcome.errorText));
@@ -948,23 +930,23 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// 双引号属性上下文专用转义：escapeHtml(textContent 实现) 不转义 ASCII 双引号，
-// 直接拼入 src="..."/alt="..." 仍可被 `"` 逸出注入事件属性，故额外转义双引号。
+// Double-quote attribute escaping: escapeHtml does not escape ASCII double quotes;
+// escape for src="..." and alt="..." attributes to prevent event handler injection.
 function escapeAttr(text) {
     return escapeHtml(text).replace(/"/g, '&quot;');
 }
 
-// 把 AI 回复渲染成 HTML：markdown 图片 ![](url)、裸图片 URL/data URI → <img>，其余文本转义
+// Render AI response as HTML: convert markdown images and data URIs to <img>, escaping remaining text
 function _pgRenderContent(text) {
     if (!text) return '';
     const imgs = [];
     let s = text;
-    // 1) markdown 图片 ![alt](url)
+    // 1) Markdown images: ![alt](url)
     s = s.replace(/!\[[^\]]*\]\((data:image\/[^)]+|https?:\/\/[^)\s]+)\)/g, (m, url) => {
         const i = imgs.push(url) - 1;
         return ` IMG${i} `;
     });
-    // 2) 裸的 data:image 或 /images/ 图片 URL
+    // 2) Standalone data:image or /images/ URL
     s = s.replace(/(data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+)/g, (m, url) => {
         const i = imgs.push(url) - 1;
         return ` IMG${i} `;
@@ -973,12 +955,11 @@ function _pgRenderContent(text) {
         const i = imgs.push(url) - 1;
         return ` IMG${i} `;
     });
-    // 转义剩余文本，再把占位符还原成 <img>
+    // Escape remaining text and restore <img> tags
     let html = escapeHtml(s);
     imgs.forEach((url, i) => {
-        // 安全：url 来自模型输出（不可信），且捕获正则允许出现双引号，直接拼进 src="..."
-        // 会被 `"` 逸出注入 onerror 等事件属性。仅允许 http(s)/data:image 协议，
-        // 并用 escapeAttr 转义属性值，杜绝属性逸出型 XSS。
+// Security: URL comes from model output (untrusted). Validate protocol http(s)/data:image
+// and escape attributes using escapeAttr to prevent XSS.
         const safeUrl = /^(https?:|data:image\/)/i.test(url) ? escapeAttr(url) : '';
         html = html.replace(` IMG${i} `,
             `<img src="${safeUrl}" class="chat-img" alt="generated image">`);
@@ -1051,7 +1032,7 @@ async function checkForUpdate() {
         updateInfo = data;
         updateCheckButton(data);
     } catch (error) {
-        console.error('检查更新失败:', error);
+        console.error('Failed to check for updates:', error);
     }
 }
 
@@ -1326,7 +1307,7 @@ async function initApp() {
     initGems();
     initLightbox();
 
-    console.log('Gemini2API 管理控制台已加载');
+    console.log('Gemini2API admin console loaded');
 }
 
 // Expose functions for onclick handlers

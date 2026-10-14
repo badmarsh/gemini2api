@@ -1,18 +1,16 @@
 /**
- * 组件加载器 - 用于动态加载 HTML 组件片段
  * Component Loader - For dynamically loading HTML component fragments
  */
 
-// 组件缓存
+// Component cache
 const componentCache = new Map();
 
 /**
- * 加载单个组件
- * @param {string} componentPath - 组件文件路径
- * @returns {Promise<string>} - 组件 HTML 内容
+ * Load a single component
+ * @param {string} componentPath - Component file path
+ * @returns {Promise<string>} - Component HTML content
  */
 async function loadComponent(componentPath) {
-    // 检查缓存
     if (componentCache.has(componentPath)) {
         return componentCache.get(componentPath);
     }
@@ -23,7 +21,6 @@ async function loadComponent(componentPath) {
             throw new Error(`Failed to load component: ${componentPath} (${response.status})`);
         }
         const html = await response.text();
-        // 缓存组件
         componentCache.set(componentPath, html);
         return html;
     } catch (error) {
@@ -33,10 +30,10 @@ async function loadComponent(componentPath) {
 }
 
 /**
- * 将组件插入到指定容器
- * @param {string} componentPath - 组件文件路径
- * @param {string|HTMLElement} container - 容器选择器或元素
- * @param {string} position - 插入位置: 'replace', 'append', 'prepend', 'beforeend', 'afterbegin'
+ * Insert component into specified container
+ * @param {string} componentPath - Component file path
+ * @param {string|HTMLElement} container - Container selector or element
+ * @param {string} position - Insertion position: 'replace', 'append', 'prepend', 'beforeend', 'afterbegin'
  * @returns {Promise<void>}
  */
 async function insertComponent(componentPath, container, position = 'beforeend') {
@@ -58,8 +55,8 @@ async function insertComponent(componentPath, container, position = 'beforeend')
 }
 
 /**
- * 批量加载多个组件
- * @param {Array<{path: string, container: string, position?: string}>} components - 组件配置数组
+ * Batch load multiple components
+ * @param {Array<{path: string, container: string, position?: string}>} components - Component configs
  * @returns {Promise<void>}
  */
 async function loadComponents(components) {
@@ -70,25 +67,25 @@ async function loadComponents(components) {
 }
 
 /**
- * 初始化页面组件
- * 加载所有页面组件并插入到相应位置
+ * Initialize page components
+ * Loads all page components and inserts them into appropriate layout slots
  * @returns {Promise<void>}
  */
 async function initializeComponents() {
     const basePath = 'components/';
 
     try {
-        // 首先加载 header
+        // Load header first
         await insertComponent(`${basePath}header.html`, '.container', 'afterbegin');
 
-        // 然后加载 sidebar
+        // Load sidebar next
         await insertComponent(`${basePath}sidebar.html`, '#sidebar-container', 'replace');
 
-        // 最后加载所有 section 组件
+        // Load all section components
         const sectionComponents = [
             { path: `${basePath}section-dashboard.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-accounts.html`, container: '#content-container', position: 'beforeend' },
-                { path: `${basePath}section-playground.html`, container: '#content-container', position: 'beforeend' },
+            { path: `${basePath}section-playground.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-usage-stats.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-logs.html`, container: '#content-container', position: 'beforeend' },
             { path: `${basePath}section-api-keys.html`, container: '#content-container', position: 'beforeend' },
@@ -99,7 +96,6 @@ async function initializeComponents() {
         await loadComponents(sectionComponents);
 
         console.log('All components loaded successfully');
-        // 触发组件加载完成事件
         window.dispatchEvent(new CustomEvent('componentsLoaded'));
 
     } catch (error) {
@@ -109,13 +105,13 @@ async function initializeComponents() {
 }
 
 /**
- * 清除组件缓存
+ * Clear component cache
  */
 function clearComponentCache() {
     componentCache.clear();
 }
 
-// 导出函数
+// Export functions
 export {
     loadComponent,
     insertComponent,

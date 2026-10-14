@@ -126,14 +126,14 @@
     align-self: flex-start;
 }
 
-/* 响应式 */
+/* Responsive */
 @media (max-width: 768px) {
     .config-grid {
         grid-template-columns: 1fr;
     }
 }
 
-/* 暗黑主题适配 */
+/* Dark Theme Support */
 [data-theme="dark"] .config-card {
     background: var(--bg-primary);
 }

@@ -3,12 +3,12 @@
     "id": "account-0",
     "psid": "g.a000xxx_your_Secure-1PSID_value_here",
     "psidts": "sidts-xxx_your_Secure-1PSIDTS_value_here",
-    "label": "主账号"
+    "label": "Primary Account"
   },
   {
     "id": "account-1",
     "psid": "g.a000yyy_your_second_PSID",
     "psidts": "sidts-yyy_your_second_PSIDTS",
-    "label": "备用账号"
+    "label": "Secondary Account"
   }
 ]

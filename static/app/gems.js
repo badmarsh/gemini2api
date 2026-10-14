@@ -2,7 +2,7 @@ import { apiCall } from './auth.js';
 import { showToast, escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 
-// 双引号属性上下文专用转义
+// Double-quote attribute escaping
 function escapeAttr(str) {
     return escapeHtml(String(str ?? '')).replace(/"/g, '&quot;');
 }

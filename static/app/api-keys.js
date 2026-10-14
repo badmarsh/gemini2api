@@ -2,8 +2,8 @@ import { apiCall } from './auth.js';
 import { showToast, escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 
-// 双引号属性上下文专用转义：escapeHtml(textContent 实现) 不转义 ASCII 双引号，
-// 直接拼入 value="..." 仍可被 `"` 逸出注入事件属性，故对属性值额外转义双引号。
+// Double-quote attribute escaping: escapeHtml (via textContent) does not escape ASCII double quotes,
+// so directly concatenating into value="..." could allow `"` injection.
 function escapeAttr(str) {
     return escapeHtml(String(str ?? '')).replace(/"/g, '&quot;');
 }
@@ -49,7 +49,7 @@ export async function loadApiKeys() {
         keysData = data.keys || [];
         renderKeysList();
     } catch (error) {
-        showToast('加载 API Keys 失败: ' + error.message, 'error');
+        showToast('Failed to load API keys: ' + error.message, 'error');
     }
     await loadFallbackState();
 }
@@ -60,7 +60,7 @@ async function loadFallbackState() {
         const sw = document.getElementById('ak-fallback-switch');
         if (sw) sw.checked = !!data.enabled;
     } catch (error) {
-        console.error('加载兜底开关状态失败:', error);  // 不影响 key 列表，静默
+        console.error('Failed to load fallback state:', error);
     }
 }
 
@@ -68,10 +68,10 @@ async function handleFallbackToggle(e) {
     const enabled = e.currentTarget.checked;
     try {
         await apiCall('PATCH', '/admin/api-keys/fallback', { enabled });
-        showToast(enabled ? t('apiKeys.fallback.on') : t('apiKeys.fallback.off'), 'success');
+        showToast(enabled ? (t('apiKeys.fallback.on') || 'Fallback enabled') : (t('apiKeys.fallback.off') || 'Fallback disabled'), 'success');
     } catch (error) {
-        e.currentTarget.checked = !enabled;  // 回滚 UI
-        showToast(t('apiKeys.fallback.failed') + ': ' + error.message, 'error');
+        e.currentTarget.checked = !enabled;
+        showToast((t('apiKeys.fallback.failed') || 'Fallback update failed') + ': ' + error.message, 'error');
     }
 }
 
@@ -97,7 +97,7 @@ async function loadCatalog() {
         catalogData = data.catalog || {};
         handleProviderChange();
     } catch (error) {
-        showToast('加载模型目录失败: ' + error.message, 'error');
+        showToast('Failed to load model catalog: ' + error.message, 'error');
     }
 }
 
@@ -120,17 +120,16 @@ function handleProviderChange() {
         baseUrlInput.value = '';
     }
 
-    modelsList.innerHTML = `<span style="color:var(--text-secondary);font-size:0.8rem">${t('apiKeys.modelsHint')}</span>`;
+    modelsList.innerHTML = `<span style="color:var(--text-secondary);font-size:0.8rem">${t('apiKeys.modelsHint') || 'Select or enter models'}</span>`;
 }
 
 function renderModelCheckboxes(models) {
     const container = document.getElementById('ak-models-list');
     if (models.length === 0) {
-        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.8rem">暂无可用模型</span>';
+        container.innerHTML = '<span style="color:var(--text-secondary);font-size:0.8rem">No models available</span>';
         return;
     }
-    // 安全：模型 id 可能来自攻击者可控的自定义 provider /models 接口，转义后再拼入
-    // value 属性（escapeAttr 含双引号）与文本内容（escapeHtml），防止存储型 XSS。
+    // Security: model id may come from custom provider /models endpoint; escape before inserting.
     container.innerHTML = models.map(m =>
         '<label style="display:inline-flex;align-items:center;gap:0.3rem;padding:0.2rem 0.5rem;cursor:pointer;font-size:0.85rem">' +
         '<input type="checkbox" value="' + escapeAttr(m) + '"> ' + escapeHtml(String(m ?? '')) + '</label>'
@@ -139,7 +138,7 @@ function renderModelCheckboxes(models) {
 
 function addModelChip(model) {
     const container = document.getElementById('ak-models-list');
-    // 通过遍历比对 dataset 而非把 model 拼进 CSS 选择器，避免选择器注入/语法错误
+    // Compare dataset instead of interpolating into CSS selector to prevent syntax/injection errors
     const existing = Array.from(container.querySelectorAll('.ak-model-chip'))
         .some(el => el.dataset.model === model);
     if (existing) return;
@@ -150,8 +149,7 @@ function addModelChip(model) {
     const chip = document.createElement('span');
     chip.className = 'ak-model-chip';
     chip.dataset.model = model;
-    // 安全：model 可能来自攻击者可控字符串，模型名作为文本节点写入（textContent），
-    // 删除图标单独 append，避免把未转义的 model 拼进 innerHTML 触发 XSS。
+    // Security: write model name as text node (textContent) to prevent XSS
     chip.textContent = model + ' ';
     const icon = document.createElement('i');
     icon.className = 'fas fa-times';
@@ -167,20 +165,20 @@ async function handleFetchModels() {
     const baseUrl = document.getElementById('ak-baseurl').value.trim();
     const provider = document.getElementById('ak-provider').value;
 
-    if (!apiKey) { showToast('请先输入 API Key', 'warning'); return; }
-    if (!baseUrl) { showToast('请先输入 Base URL', 'warning'); return; }
+    if (!apiKey) { showToast('Please enter API Key first', 'warning'); return; }
+    if (!baseUrl) { showToast('Please enter Base URL first', 'warning'); return; }
 
     try {
         const data = await apiCall('POST', '/admin/api-keys/models', { provider, api_key: apiKey, base_url: baseUrl });
         const models = (data.models || []).map(m => m.id || m.display_name || m);
         if (models.length > 0) {
             renderModelCheckboxes(models);
-            showToast('获取到 ' + models.length + ' 个模型', 'success');
+            showToast('Found ' + models.length + ' models', 'success');
         } else {
-            showToast('未获取到模型', 'warning');
+            showToast('No models found', 'warning');
         }
     } catch (error) {
-        showToast('获取模型失败: ' + error.message, 'error');
+        showToast('Failed to fetch models: ' + error.message, 'error');
     }
 }
 
@@ -191,7 +189,7 @@ async function handleAddKey() {
     const label = document.getElementById('ak-label').value.trim();
     const reasoningEffort = document.getElementById('ak-effort').value.trim();
 
-    if (!apiKey) { showToast('请填写 API Key', 'warning'); return; }
+    if (!apiKey) { showToast('Please enter API Key', 'warning'); return; }
 
     let models = [];
     const chips = document.querySelectorAll('#ak-models-list .ak-model-chip');
@@ -203,15 +201,15 @@ async function handleAddKey() {
         if (customVal) models = [customVal];
     }
 
-    if (models.length === 0) { showToast('请至少选择一个模型', 'warning'); return; }
+    if (models.length === 0) { showToast('Please select at least one model', 'warning'); return; }
 
     try {
         await apiCall('POST', '/admin/api-keys', { provider, models, api_key: apiKey, base_url: baseUrl, label, reasoning_effort: reasoningEffort || null });
-        showToast('添加成功', 'success');
+        showToast('Key added successfully', 'success');
         hideAddPanel();
         await loadApiKeys();
     } catch (error) {
-        showToast('添加失败: ' + error.message, 'error');
+        showToast('Failed to add key: ' + error.message, 'error');
     }
 }
 
@@ -232,25 +230,22 @@ function renderKeysList() {
     updateBatchBar();
 
     if (keysData.length === 0) {
-        container.innerHTML = `<div class="ak-empty"><i class="fas fa-key"></i><p>${t('apiKeys.noKeys')}</p>` +
-            `<button class="btn btn-primary btn-sm" onclick="document.getElementById('ak-add-btn').click()"><i class="fas fa-plus"></i> ${t('apiKeys.addFirst')}</button></div>`;
+        container.innerHTML = `<div class="ak-empty"><i class="fas fa-key"></i><p>${t('apiKeys.noKeys') || 'No API Keys'}</p>` +
+            `<button class="btn btn-primary btn-sm" onclick="document.getElementById('ak-add-btn').click()"><i class="fas fa-plus"></i> ${t('apiKeys.addFirst') || 'Add Key'}</button></div>`;
         return;
     }
 
     let html = '<table><thead><tr>';
     html += '<th><input type="checkbox" id="ak-select-all"></th>';
-    html += '<th>Provider</th><th>模型</th><th>API Key</th><th>标签</th><th>状态</th><th>思考</th><th>操作</th>';
+    html += '<th>Provider</th><th>Model</th><th>API Key</th><th>Label</th><th>Status</th><th>Thinking</th><th>Actions</th>';
     html += '</tr></thead><tbody>';
 
     keysData.forEach(key => {
         const color = PROVIDER_COLORS[key.provider] || PROVIDER_COLORS.custom;
         const statusClass = key.status === 'active' ? 'ak-status-active' : 'ak-status-disabled';
-        const statusText = key.status === 'active' ? '启用' : '禁用';
-        const toggleText = key.status === 'active' ? '禁用' : '启用';
+        const statusText = key.status === 'active' ? 'Active' : 'Disabled';
+        const toggleText = key.status === 'active' ? 'Disable' : 'Enable';
 
-        // 安全：provider/model/api_key/label 均为用户可控且持久化（label 来自添加表单，
-        // model 可能来自攻击者可控的 provider /models / 导入文件），渲染前一律转义；
-        // id/status 进入 data-* 属性也用 escapeAttr 转义，防止属性逸出。
         const idEsc = escapeAttr(key.id);
         html += '<tr>';
         html += '<td><input type="checkbox" class="ak-cb" data-id="' + idEsc + '"></td>';
@@ -261,7 +256,7 @@ function renderKeysList() {
         html += '<td><span class="' + statusClass + '">' + escapeHtml(statusText) + '</span></td>';
         html += '<td><input type="text" class="ak-effort-input" data-id="' + idEsc +
                 '" list="ak-effort-presets" value="' + escapeAttr(String(key.reasoning_effort ?? '')) +
-                '" placeholder="默认" style="width:90px"></td>';
+                '" placeholder="Default" style="width:90px"></td>';
         html += '<td class="ak-actions">';
         html += '<button class="btn btn-xs btn-outline ak-toggle-btn" data-id="' + idEsc + '" data-status="' + escapeAttr(key.status) + '">' + escapeHtml(toggleText) + '</button>';
         html += '<button class="btn btn-xs btn-danger ak-del-btn" data-id="' + idEsc + '"><i class="fas fa-trash"></i></button>';
@@ -299,7 +294,7 @@ function updateBatchBar() {
     const countEl = document.getElementById('ak-selected-count');
     if (selectedIds.size > 0) {
         bar.style.display = '';
-        countEl.textContent = selectedIds.size + ' 项已选';
+        countEl.textContent = selectedIds.size + ' selected';
     } else {
         bar.style.display = 'none';
     }
@@ -311,10 +306,10 @@ async function handleStatusToggle(e) {
     const newStatus = btn.dataset.status === 'active' ? 'disabled' : 'active';
     try {
         await apiCall('PATCH', '/admin/api-keys/' + id + '/status', { status: newStatus });
-        showToast('状态已更新', 'success');
+        showToast('Status updated', 'success');
         await loadApiKeys();
     } catch (error) {
-        showToast('更新失败: ' + error.message, 'error');
+        showToast('Update failed: ' + error.message, 'error');
     }
 }
 
@@ -324,40 +319,39 @@ async function handleEffortChange(e) {
     const value = inp.value.trim();
     try {
         await apiCall('PATCH', '/admin/api-keys/' + id + '/reasoning-effort', { reasoning_effort: value || null });
-        showToast('思考设置已更新', 'success');
+        showToast('Reasoning effort updated', 'success');
         await loadApiKeys();
     } catch (error) {
-        showToast('更新失败: ' + error.message, 'error');
+        showToast('Update failed: ' + error.message, 'error');
     }
 }
 
 async function handleDelete(e) {
     const id = e.currentTarget.dataset.id;
-    if (!confirm('确定要删除这个 API Key 吗？')) return;
+    if (!confirm('Are you sure you want to delete this API Key?')) return;
     try {
         await apiCall('DELETE', '/admin/api-keys/' + id);
-        showToast('删除成功', 'success');
+        showToast('Deleted successfully', 'success');
         await loadApiKeys();
     } catch (error) {
-        showToast('删除失败: ' + error.message, 'error');
+        showToast('Delete failed: ' + error.message, 'error');
     }
 }
 
 async function handleBatchDelete() {
     if (selectedIds.size === 0) return;
-    if (!confirm('确定要删除选中的 ' + selectedIds.size + ' 个 Key 吗？')) return;
+    if (!confirm('Are you sure you want to delete ' + selectedIds.size + ' selected key(s)?')) return;
     try {
         await apiCall('POST', '/admin/api-keys/batch-delete', { ids: Array.from(selectedIds) });
-        showToast('批量删除成功', 'success');
+        showToast('Batch delete successful', 'success');
         await loadApiKeys();
     } catch (error) {
-        showToast('批量删除失败: ' + error.message, 'error');
+        showToast('Batch delete failed: ' + error.message, 'error');
     }
 }
 
 async function handleExport() {
     try {
-        // 契约：批次2 后 export 默认脱敏，导出可再导入的明文需 reveal=true（VULN-002）
         const data = await apiCall('GET', '/admin/api-keys/export?reveal=true');
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -366,9 +360,9 @@ async function handleExport() {
         a.download = 'api-keys-' + new Date().toISOString().split('T')[0] + '.json';
         a.click();
         URL.revokeObjectURL(url);
-        showToast('导出成功', 'success');
+        showToast('Export successful', 'success');
     } catch (error) {
-        showToast('导出失败: ' + error.message, 'error');
+        showToast('Export failed: ' + error.message, 'error');
     }
 }
 
@@ -388,9 +382,9 @@ async function handleImport(e) {
         const data = JSON.parse(text);
         const keys = data.keys || data;
         await apiCall('POST', '/admin/api-keys/import', { keys: Array.isArray(keys) ? keys : [] });
-        showToast('导入成功', 'success');
+        showToast('Import successful', 'success');
         await loadApiKeys();
     } catch (error) {
-        showToast('导入失败: ' + error.message, 'error');
+        showToast('Import failed: ' + error.message, 'error');
     }
 }

@@ -122,7 +122,7 @@ async function loadHistory() {
     const container = document.getElementById('us-chart-container');
     if (!container) return;
 
-    container.innerHTML = '<div class="chart-loading"><i class="fas fa-spinner fa-spin"></i> 加载中...</div>';
+    container.innerHTML = '<div class="chart-loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
 
     try {
         let url = '/admin/usage-stats/history?granularity=' + currentGranularity;
@@ -131,12 +131,12 @@ async function loadHistory() {
         }
         const data = await apiCall('GET', url);
         if (!data || data.length === 0) {
-            container.innerHTML = '<div class="empty-chart"><i class="fas fa-chart-bar"></i><p>暂无数据</p></div>';
+            container.innerHTML = '<div class="empty-chart"><i class="fas fa-chart-bar"></i><p>No data</p></div>';
             return;
         }
         renderChart(container, data);
     } catch (e) {
-        container.innerHTML = '<div class="empty-chart"><i class="fas fa-exclamation-circle"></i><p>加载失败</p></div>';
+        container.innerHTML = '<div class="empty-chart"><i class="fas fa-exclamation-circle"></i><p>Failed to load</p></div>';
         console.error('Load usage history failed:', e);
     }
 }
@@ -204,9 +204,9 @@ function renderChart(container, data) {
     });
 
     svg += '<rect x="' + pad.left + '" y="8" width="10" height="10" fill="' + primaryColor + '" opacity="0.7" rx="2"/>';
-    svg += '<text x="' + (pad.left + 14) + '" y="17" font-size="11" fill="' + textSecondary + '">请求数</text>';
-    svg += '<line x1="' + (pad.left + 60) + '" y1="13" x2="' + (pad.left + 72) + '" y2="13" stroke="' + warningColor + '" stroke-width="2"/>';
-    svg += '<text x="' + (pad.left + 76) + '" y="17" font-size="11" fill="' + textSecondary + '">延迟</text>';
+    svg += '<text x="' + (pad.left + 14) + '" y="17" font-size="11" fill="' + textSecondary + '">Requests</text>';
+    svg += '<line x1="' + (pad.left + 75) + '" y1="13" x2="' + (pad.left + 87) + '" y2="13" stroke="' + warningColor + '" stroke-width="2"/>';
+    svg += '<text x="' + (pad.left + 91) + '" y="17" font-size="11" fill="' + textSecondary + '">Latency</text>';
 
     svg += '</svg>';
     container.innerHTML = svg;
@@ -218,7 +218,7 @@ function renderModelTable(modelRequests) {
 
     const entries = Object.entries(modelRequests).sort((a, b) => b[1] - a[1]);
     if (entries.length === 0) {
-        container.innerHTML = '<div class="empty-chart"><i class="fas fa-cube"></i><p>暂无模型数据</p></div>';
+        container.innerHTML = '<div class="empty-chart"><i class="fas fa-cube"></i><p>No model data</p></div>';
         return;
     }
 

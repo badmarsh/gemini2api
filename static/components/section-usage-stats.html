@@ -2,7 +2,7 @@
 <script type="module" src="app/usage-chart.js"></script>
 <!-- Usage Stats Section -->
 <section id="usage-stats" class="section" aria-labelledby="usage-stats-title">
-    <h2 id="usage-stats-title" data-i18n="usage.title">使用统计</h2>
+    <h2 id="usage-stats-title" data-i18n="usage.title">Usage Stats</h2>
 
     <!-- Summary Cards -->
     <div class="stats-grid">
@@ -10,28 +10,28 @@
             <div class="stat-icon"><i class="fas fa-paper-plane"></i></div>
             <div class="stat-info">
                 <h3 id="us-total-requests">0</h3>
-                <p data-i18n="usage.totalRequests">总请求数</p>
+                <p data-i18n="usage.totalRequests">Total Requests</p>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
             <div class="stat-info">
                 <h3 id="us-error-rate">0%</h3>
-                <p data-i18n="usage.errorRate">错误率</p>
+                <p data-i18n="usage.errorRate">Error Rate</p>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon"><i class="fas fa-clock"></i></div>
             <div class="stat-info">
                 <h3 id="us-avg-latency">0ms</h3>
-                <p data-i18n="usage.avgLatency">平均延迟</p>
+                <p data-i18n="usage.avgLatency">Average Latency</p>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon"><i class="fas fa-sync-alt"></i></div>
             <div class="stat-info">
                 <h3 id="us-rotation-rate">0%</h3>
-                <p data-i18n="usage.rotationRate">轮换成功率</p>
+                <p data-i18n="usage.rotationRate">Rotation Success Rate</p>
             </div>
         </div>
     </div>
@@ -40,15 +40,15 @@
     <div class="usage-chart-panel">
         <div class="chart-controls">
             <div class="control-group">
-                <label data-i18n="usage.granularity">粒度:</label>
+                <label data-i18n="usage.granularity">Granularity:</label>
                 <div class="btn-group" id="us-granularity">
-                    <button class="btn btn-sm btn-outline" data-value="five_min" data-i18n="usage.fiveMin">5分钟</button>
-                    <button class="btn btn-sm btn-outline active" data-value="hourly" data-i18n="usage.hourly">小时</button>
-                    <button class="btn btn-sm btn-outline" data-value="daily" data-i18n="usage.daily">天</button>
+                    <button class="btn btn-sm btn-outline" data-value="five_min" data-i18n="usage.fiveMin">5m</button>
+                    <button class="btn btn-sm btn-outline active" data-value="hourly" data-i18n="usage.hourly">Hourly</button>
+                    <button class="btn btn-sm btn-outline" data-value="daily" data-i18n="usage.daily">Daily</button>
                 </div>
             </div>
             <div class="control-group">
-                <label data-i18n="usage.timeRange">时间范围:</label>
+                <label data-i18n="usage.timeRange">Time Range:</label>
                 <div class="btn-group" id="us-timerange">
                     <button class="btn btn-sm btn-outline" data-value="1">1h</button>
                     <button class="btn btn-sm btn-outline" data-value="6">6h</button>
@@ -56,28 +56,28 @@
                     <button class="btn btn-sm btn-outline" data-value="72">3d</button>
                     <button class="btn btn-sm btn-outline" data-value="168">7d</button>
                     <button class="btn btn-sm btn-outline" data-value="720">30d</button>
-                    <button class="btn btn-sm btn-outline" data-value="all">全部</button>
+                    <button class="btn btn-sm btn-outline" data-value="all">All</button>
                 </div>
             </div>
             <button class="btn btn-sm btn-outline" id="us-refresh-btn">
-                <i class="fas fa-sync-alt"></i> <span data-i18n="usage.refresh">刷新</span>
+                <i class="fas fa-sync-alt"></i> <span data-i18n="usage.refresh">Refresh</span>
             </button>
         </div>
 
         <!-- SVG Chart Container -->
         <div class="chart-container" id="us-chart-container">
             <div class="chart-loading">
-                <i class="fas fa-spinner fa-spin"></i> 加载中...
+                <i class="fas fa-spinner fa-spin"></i> Loading...
             </div>
         </div>
     </div>
 
     <!-- Model Distribution -->
     <div class="usage-model-panel">
-        <h3><i class="fas fa-cube"></i> <span data-i18n="usage.modelDistribution">模型分布</span></h3>
+        <h3><i class="fas fa-cube"></i> <span data-i18n="usage.modelDistribution">Model Distribution</span></h3>
         <div id="us-model-table" class="model-distribution-table">
             <div class="chart-loading">
-                <i class="fas fa-spinner fa-spin"></i> 加载中...
+                <i class="fas fa-spinner fa-spin"></i> Loading...
             </div>
         </div>
     </div>

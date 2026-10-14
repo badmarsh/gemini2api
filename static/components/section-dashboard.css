@@ -1,4 +1,4 @@
-/* 统计卡片 */
+/* Stat Cards */
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -402,7 +402,7 @@
     line-height: 1.4;
 }
 
-/* 响应式 */
+/* Responsive */
 @media (max-width: 1024px) {
     .info-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -435,7 +435,7 @@
     }
 }
 
-/* 暗黑主题适配 */
+/* Dark Theme Support */
 [data-theme="dark"] .stat-card {
     background: var(--bg-primary);
 }

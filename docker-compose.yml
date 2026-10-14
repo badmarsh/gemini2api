@@ -1,6 +1,9 @@
 services:
   gemini2api:
-    image: ghcr.io/xwteam/gemini2api:latest
+    image: ghcr.io/badmarsh/gemini2api:latest
+    # Fallback: build from this checkout when the published image is unavailable
+    # (e.g. no release has been pushed to this fork's registry yet).
+    build: .
     container_name: gemini2api
     # Starts as root, docker-entrypoint.sh repairs ownership of ./data and ./api volumes,
     # then drops privileges to run as non-root 'appuser'. No need to specify user:.
@@ -9,7 +12,9 @@ services:
     environment:
       - TZ=UTC
     ports:
-      - "5918:5918"
+      # Loopback only by default. To expose on the network, put a reverse proxy / firewall
+      # in front and change this to "5918:5918" deliberately.
+      - "127.0.0.1:5918:5918"
     volumes:
       - ./data:/app/data
       - ./api:/app/api

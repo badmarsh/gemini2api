@@ -1,55 +1,55 @@
 <link rel="stylesheet" href="components/section-playground.css?v=7">
-<!-- 模型测试 Section -->
+<!-- Playground Section -->
 <section id="playground" class="section" aria-labelledby="playground-title">
-    <h2 id="playground-title"><i class="fas fa-flask"></i> <span data-i18n="playground.title">模型测试</span></h2>
+    <h2 id="playground-title"><i class="fas fa-flask"></i> <span data-i18n="playground.title">Playground</span></h2>
 
     <div class="playground-container">
         <!-- Left Panel: Request Config -->
         <div class="playground-panel">
-            <h3 data-i18n="playground.config">请求配置</h3>
+            <h3 data-i18n="playground.config">Request Configuration</h3>
             <div class="form-group">
-                <label class="form-label" for="pg-model" data-i18n="playground.model">模型</label>
+                <label class="form-label" for="pg-model" data-i18n="playground.model">Model</label>
                 <select id="pg-model" class="form-control">
-                    <option value="">加载中...</option>
+                    <option value="">Loading...</option>
                 </select>
             </div>
             <div class="form-group">
                 <label class="pg-thinking-toggle">
                     <input type="checkbox" id="pg-thinking">
-                    <span data-i18n="playground.thinking">思考</span>
+                    <span data-i18n="playground.thinking">Thinking</span>
                 </label>
-                <span class="form-hint" data-i18n="playground.thinkingHint">开启后返回模型的思考过程（简单问题可能没有思考内容）</span>
+                <span class="form-hint" data-i18n="playground.thinkingHint">Returns the model's reasoning/thinking process.</span>
             </div>
             <div class="form-group">
-                <label class="form-label" for="pg-message" data-i18n="playground.message">消息内容</label>
-                <textarea id="pg-message" class="form-control" data-i18n-placeholder="playground.inputPlaceholder" placeholder="输入消息..." rows="10"></textarea>
-                <span class="form-hint" data-i18n="playground.hint">Enter 发送，Shift + Enter 换行</span>
+                <label class="form-label" for="pg-message" data-i18n="playground.message">Message</label>
+                <textarea id="pg-message" class="form-control" data-i18n-placeholder="playground.inputPlaceholder" placeholder="Type a message..." rows="10"></textarea>
+                <span class="form-hint" data-i18n="playground.hint">Enter to send, Shift + Enter for new line</span>
             </div>
             <div class="form-group">
-                <label class="form-label" data-i18n="playground.images">图片</label>
+                <label class="form-label" data-i18n="playground.images">Images</label>
                 <div id="pg-image-preview" class="pg-image-preview"></div>
                 <button type="button" class="btn btn-outline btn-sm" id="pg-image-btn">
-                    <i class="fas fa-image"></i> <span data-i18n="playground.addImage">添加图片</span>
+                    <i class="fas fa-image"></i> <span data-i18n="playground.addImage">Add Image</span>
                 </button>
                 <input type="file" id="pg-image-input" accept="image/*" multiple hidden>
             </div>
             <div class="flex gap-1">
                 <button class="btn btn-primary" id="pg-send">
-                    <i class="fas fa-paper-plane"></i> <span data-i18n="playground.send">发送</span>
+                    <i class="fas fa-paper-plane"></i> <span data-i18n="playground.send">Send</span>
                 </button>
                 <button class="btn btn-outline" id="pg-clear-btn">
-                    <i class="fas fa-redo-alt"></i> <span data-i18n="playground.newChat">新对话</span>
+                    <i class="fas fa-redo-alt"></i> <span data-i18n="playground.newChat">New Chat</span>
                 </button>
             </div>
         </div>
 
         <!-- Right Panel: Chat -->
         <div class="playground-panel chat-panel">
-            <h3 data-i18n="playground.chat">对话</h3>
+            <h3 data-i18n="playground.chat">Chat</h3>
             <div id="pg-chat" class="chat-container">
                 <div class="chat-placeholder">
                     <i class="fas fa-comment-dots"></i>
-                    <p data-i18n="playground.startChat">发送消息开始对话</p>
+                    <p data-i18n="playground.startChat">Send a message to start conversation</p>
                 </div>
             </div>
         </div>

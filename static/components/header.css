@@ -1,4 +1,4 @@
-/* Header - 玻璃拟态效果 */
+/* Header - Glassmorphism */
 .header {
     background: var(--bg-glass);
     backdrop-filter: blur(12px);

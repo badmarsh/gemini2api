@@ -15,24 +15,23 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 COPY app/ ./app/
 COPY static/ ./static/
-# 烘焙 api/ 热更新资源（QR 配置/图片）进镜像，使镜像自包含：
-# 即使 docker run 不挂载 ./api:/app/api，/app/api 也存在，避免 StaticFiles 启动崩溃；
-# compose 的 bind mount 仍可在运行时覆盖这些默认资源。
-# 注意：仓库 .dockerignore 默认排除 api，发布流水线会在构建前临时取消该排除。
+# Bake api/ runtime assets (QR configuration and images) into image for self-containment:
+# Ensures /app/api exists even if docker run does not mount ./api:/app/api, preventing StaticFiles crash;
+# Compose bind mounts can still override these defaults at runtime.
+# Note: .dockerignore excludes api by default, release pipelines temporarily un-exclude it before build.
 COPY api/ ./api/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-# 非 root 运行：缩小容器被攻破后的影响面（VULN 加固）。uid 1000 与常见宿主用户、
-# refresher 的 pwuser 对齐，使共享的 ./data 属主一致。容器以 root 启动后由
-# docker-entrypoint.sh 修复 bind 挂载卷属主再 gosu 降权到 appuser——这样既非 root 运行，
-# 又让历史部署（data 由旧 root 容器创建）`docker compose pull` 无缝升级，无需手动 chown。
+# Run as non-root: reduce blast radius (security hardening). UID 1000 aligns with common host users
+# and refresher's pwuser for consistent ./data ownership. The container starts as root so
+# docker-entrypoint.sh can fix bind-mount permissions, then drops privileges to appuser via gosu.
 RUN useradd -m -u 1000 appuser \
     && chown -R appuser:appuser /app \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 5918
 
-# 镜像内健康检查：plain docker run 也能获得 liveness 信号（compose 另有 healthcheck）。
+# Container healthcheck: enables liveness signals for standalone docker run (compose has its own check).
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD wget -q -O /dev/null http://localhost:5918/health || exit 1
 

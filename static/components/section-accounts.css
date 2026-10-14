@@ -263,7 +263,7 @@
     color: var(--text-tertiary);
 }
 
-/* 响应式 */
+/* Responsive */
 @media (max-width: 768px) {
     .accounts-grid {
         grid-template-columns: 1fr;
@@ -274,7 +274,7 @@
     }
 }
 
-/* 暗黑主题适配 */
+/* Dark Theme Support */
 [data-theme="dark"] .account-card {
     background: var(--bg-primary);
 }

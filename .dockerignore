@@ -33,7 +33,8 @@ accounts.json
 *_rsa
 .cookies
 data
-api
+
+# NOTE: api/ is intentionally NOT ignored - the Dockerfile COPYs it (tracked QR assets, no secrets).
 
 # Python caches / virtualenvs
 __pycache__

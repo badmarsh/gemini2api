@@ -5,8 +5,8 @@ import { t } from './i18n.js';
 let originalSettings = {};
 let modelMappings = {};
 
-// 双引号属性上下文专用转义：escapeHtml(textContent 实现) 不会转义 ASCII 双引号，
-// 直接拼入 value="..."/data-*="..." 仍可被 `"` 逸出注入事件属性，故额外转义双引号。
+// Double-quote attribute escaping: escapeHtml (via textContent) does not escape ASCII double quotes,
+// so directly concatenating into value="..." or data-*="..." could allow `"` injection.
 function escapeAttr(str) {
   return escapeHtml(String(str ?? '')).replace(/"/g, '&quot;');
 }
@@ -60,8 +60,7 @@ function getFieldLabel(key) {
   return map[key] ? (map[key].startsWith('settings.') ? t(map[key]) : map[key]) : key;
 }
 
-// 字段级补充说明（可选）。只有出现在这里的字段才会多渲染一行提示，
-// 未登记的字段渲染结果与之前逐字节一致。
+// Optional field-level hint explanations.
 const FIELD_HINTS = {
   log_bodies_enabled: 'settings.hint.logBodies'
 };
@@ -75,11 +74,8 @@ const ROTATION_OPTIONS = [
   { value: 'failover', labelKey: 'settings.strategy.failover' }
 ];
 
-// 后端 app/core/settings_overrides.py 的 FIELD_TYPES 里声明为 float 的字段。
-// 必须按字段名判定，不能按"当前值是不是整数"猜：JSON 没有 int/float 之分，后端的
-// 24.0 到了 JS 就是 24，Number.isInteger(24) 为真 —— 默认部署下永远猜成整数字段，
-// step 永远是 1，0.5 依旧被 parseInt 截断成 0。tests/unit/test_settings_float_fields.py
-// 有守卫断言本集合与后端 FIELD_TYPES 完全一致，后端加了新 float 字段这里不跟就会红。
+// Fields declared as float in backend app/core/settings_overrides.py FIELD_TYPES.
+// Kept in sync with backend FIELD_TYPES (guarded by tests/unit/test_settings_float_fields.py).
 const FLOAT_FIELDS = new Set([
   'chat_cleanup_keep_hours',
   'chat_cleanup_interval_hours'
@@ -111,9 +107,7 @@ function createFieldInput(key, value) {
   }
 
   if (type === 'number') {
-    // step 既是给浏览器的输入约束，也是 collectFormValues 判断该用 parseInt 还是
-    // parseFloat 的依据：后端把 chat_cleanup_* 声明为 float，允许 0.5 这样的小时数，
-    // 一律 parseInt 会把它静默截断成 0。整数字段仍是 step=1，行为与之前完全一致。
+    // step is both input constraint and signal for collectFormValues (parseFloat vs parseInt)
     const step = isFloatField(key) ? 'any' : '1';
     return `<input type="number" class="form-control" data-key="${key}" step="${step}" value="${value}">`;
   }
@@ -162,9 +156,7 @@ function renderModelMapping() {
   html += '<div class="mapping-header"><span data-i18n="settings.requestModel">' + t('settings.requestModel') + '</span><span data-i18n="settings.actualModel">' + t('settings.actualModel') + '</span><span></span></div>';
 
   for (const [alias, target] of entries) {
-    // 安全：alias/target 为用户可控且持久化（POST /admin/model-mapping 不做 HTML 过滤），
-    // 拼入 innerHTML 前一律 escapeHtml 转义；属性值与 data-alias 同样转义，
-    // 既防止属性逸出型存储 XSS，也避免引号污染 data-alias 导致 save/delete 取错别名。
+    // Security: alias/target are user-controlled and persisted; escape before inserting.
     const aliasEsc = escapeAttr(alias);
     const targetEsc = escapeAttr(target);
     html += '<div class="mapping-row" data-alias="' + aliasEsc + '">';
@@ -207,30 +199,30 @@ async function addMapping() {
   const target = targetInput.value.trim();
 
   if (!alias || !target) {
-    showToast('请填写别名和目标模型', 'warning');
+    showToast('Please fill in alias and target model', 'warning');
     return;
   }
   if (alias === target) {
-    showToast('别名不能与目标相同', 'warning');
+    showToast('Alias cannot be identical to target', 'warning');
     return;
   }
 
   try {
     await apiCall('POST', '/admin/model-mapping', { alias, target });
-    showToast('映射已添加', 'success');
+    showToast('Mapping added successfully', 'success');
     await loadModelMapping();
   } catch (error) {
-    showToast('添加失败: ' + error.message, 'error');
+    showToast('Failed to add mapping: ' + error.message, 'error');
   }
 }
 
 async function deleteMapping(alias) {
   try {
     await apiCall('DELETE', '/admin/model-mapping/' + encodeURIComponent(alias));
-    showToast('映射已删除', 'success');
+    showToast('Mapping deleted', 'success');
     await loadModelMapping();
   } catch (error) {
-    showToast('删除失败: ' + error.message, 'error');
+    showToast('Failed to delete mapping: ' + error.message, 'error');
   }
 }
 
@@ -246,15 +238,15 @@ async function saveAllMappings() {
         await apiCall('POST', '/admin/model-mapping', { alias, target });
         updated++;
       } catch (error) {
-        showToast('更新 ' + alias + ' 失败: ' + error.message, 'error');
+        showToast('Failed to update ' + alias + ': ' + error.message, 'error');
       }
     }
   }
 
   if (updated > 0) {
-    showToast('已更新 ' + updated + ' 条映射', 'success');
+    showToast('Updated ' + updated + ' mapping(s)', 'success');
   } else {
-    showToast('无变更', 'info');
+    showToast('No changes', 'info');
   }
   await loadModelMapping();
 }
@@ -265,7 +257,7 @@ async function loadModelMapping() {
     modelMappings = data.mappings || {};
     renderModelMapping();
   } catch (error) {
-    showToast('加载模型映射失败: ' + error.message, 'error');
+    showToast('Failed to load model mappings: ' + error.message, 'error');
   }
 }
 
@@ -286,10 +278,7 @@ function collectFormValues() {
     if (input.type === 'checkbox') {
       value = input.checked;
     } else if (input.type === 'number') {
-      // 后端声明为 float 的字段必须用 parseFloat，否则 0.5 会被截断成 0：0 能通过
-      // ">= 0" 的取值域校验，于是静默保存成 0 并落进 settings-overrides.json（优先级
-      // 高于环境变量），面板显示 0 而运行时被 max(1.0, x) 兜成 1 小时 —— 一个设置项
-      // 三个值，还不报错。判定同样按字段名走，不看 input.step（DOM 可能被改）。
+      // Float fields must use parseFloat to prevent truncation of fractional values
       value = isFloatField(key) ? parseFloat(input.value) : parseInt(input.value, 10);
     } else {
       value = input.value;
@@ -328,7 +317,7 @@ export async function loadSettings() {
     renderSettings(data);
     await loadModelMapping();
   } catch (error) {
-    showToast('加载设置失败: ' + error.message, 'error');
+    showToast('Failed to load settings: ' + error.message, 'error');
   }
 }
 
@@ -337,7 +326,7 @@ async function saveSettings() {
   const changedSettings = getChangedSettings(currentValues, originalSettings);
 
   if (Object.keys(changedSettings).length === 0) {
-    showToast('没有修改', 'info');
+    showToast(t('settings.noChanges') || 'No changes to save', 'info');
     return;
   }
 

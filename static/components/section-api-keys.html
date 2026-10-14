@@ -8,16 +8,16 @@
         <option value="high"></option>
     </datalist>
     <div class="section-header">
-        <h2 id="api-keys-title" data-i18n="apiKeys.title">API 管理</h2>
+        <h2 id="api-keys-title" data-i18n="apiKeys.title">API Keys</h2>
         <div class="section-header-actions">
             <button class="btn btn-sm btn-outline" id="ak-import-btn">
-                <i class="fas fa-file-import"></i> <span data-i18n="apiKeys.import">导入</span>
+                <i class="fas fa-file-import"></i> <span data-i18n="apiKeys.import">Import</span>
             </button>
             <button class="btn btn-sm btn-outline" id="ak-export-btn">
-                <i class="fas fa-file-export"></i> <span data-i18n="apiKeys.export">导出</span>
+                <i class="fas fa-file-export"></i> <span data-i18n="apiKeys.export">Export</span>
             </button>
             <button class="btn btn-sm btn-primary" id="ak-add-btn">
-                <i class="fas fa-plus"></i> <span data-i18n="apiKeys.add">添加 Key</span>
+                <i class="fas fa-plus"></i> <span data-i18n="apiKeys.add">Add Key</span>
             </button>
         </div>
     </div>
@@ -28,14 +28,14 @@
             <span class="ak-fallback-slider"></span>
         </label>
         <div class="ak-fallback-text">
-            <span class="ak-fallback-title" data-i18n="apiKeys.fallback.title">Gemini 兜底</span>
-            <span class="ak-fallback-hint" data-i18n="apiKeys.fallback.hint">仅控制 Gemini 失败时是否兜底到第三方；不影响第三方直连与模型列表</span>
+            <span class="ak-fallback-title" data-i18n="apiKeys.fallback.title">Gemini Failover</span>
+            <span class="ak-fallback-hint" data-i18n="apiKeys.fallback.hint">Controls failover to third-party providers when Gemini fails; does not affect direct routing.</span>
         </div>
     </div>
 
     <!-- Add Key Panel (hidden by default) -->
     <div id="ak-add-panel" class="ak-add-panel" style="display:none">
-        <h3><i class="fas fa-plus-circle"></i> <span data-i18n="apiKeys.addTitle">添加 API Key</span></h3>
+        <h3><i class="fas fa-plus-circle"></i> <span data-i18n="apiKeys.addTitle">Add API Key</span></h3>
         <div class="ak-form-grid">
             <div class="form-group">
                 <label for="ak-provider" data-i18n="apiKeys.provider">Provider</label>
@@ -44,7 +44,7 @@
                     <option value="anthropic">Anthropic</option>
                     <option value="gemini">Google Gemini</option>
                     <option value="openrouter">OpenRouter</option>
-                    <option value="custom">自定义</option>
+                    <option value="custom">Custom</option>
                 </select>
             </div>
             <div class="form-group">
@@ -53,37 +53,37 @@
             </div>
             <div class="form-group">
                 <label for="ak-baseurl" data-i18n="apiKeys.baseUrl">Base URL</label>
-                <input type="text" id="ak-baseurl" data-i18n-placeholder="apiKeys.baseUrlPlaceholder" placeholder="自动填充">
+                <input type="text" id="ak-baseurl" data-i18n-placeholder="apiKeys.baseUrlPlaceholder" placeholder="Auto-detected">
             </div>
             <div class="form-group">
-                <label for="ak-label" data-i18n="apiKeys.label">标签 (可选)</label>
-                <input type="text" id="ak-label" data-i18n-placeholder="apiKeys.labelPlaceholder" placeholder="例如: 生产环境">
+                <label for="ak-label" data-i18n="apiKeys.label">Label (Optional)</label>
+                <input type="text" id="ak-label" data-i18n-placeholder="apiKeys.labelPlaceholder" placeholder="e.g. Production">
             </div>
             <div class="form-group">
-                <label for="ak-effort" data-i18n="apiKeys.reasoningEffort">思考 (可选)</label>
+                <label for="ak-effort" data-i18n="apiKeys.reasoningEffort">Reasoning Effort (Optional)</label>
                 <input type="text" id="ak-effort" list="ak-effort-presets"
-                       data-i18n-placeholder="apiKeys.reasoningEffortPlaceholder" placeholder="默认(不设)">
+                       data-i18n-placeholder="apiKeys.reasoningEffortPlaceholder" placeholder="Default (unset)">
             </div>
         </div>
         <div class="form-group ak-models-group">
-            <label><span data-i18n="apiKeys.models">模型</span> <button class="btn btn-xs btn-outline" id="ak-fetch-models-btn"><i class="fas fa-sync-alt"></i> <span data-i18n="apiKeys.fetchModels">获取</span></button></label>
+            <label><span data-i18n="apiKeys.models">Models</span> <button class="btn btn-xs btn-outline" id="ak-fetch-models-btn"><i class="fas fa-sync-alt"></i> <span data-i18n="apiKeys.fetchModels">Fetch</span></button></label>
             <div id="ak-models-list" class="ak-models-list"></div>
-            <input type="text" id="ak-custom-model" data-i18n-placeholder="apiKeys.customModel" placeholder="手动输入模型名，回车添加">
+            <input type="text" id="ak-custom-model" data-i18n-placeholder="apiKeys.customModel" placeholder="Enter model name, press Enter to add">
         </div>
         <div class="ak-form-actions">
-            <button class="btn btn-primary" id="ak-confirm-add"><i class="fas fa-check"></i> <span data-i18n="apiKeys.confirmAdd">确认添加</span></button>
-            <button class="btn btn-outline" id="ak-cancel-add"><i class="fas fa-times"></i> <span data-i18n="apiKeys.cancel">取消</span></button>
+            <button class="btn btn-primary" id="ak-confirm-add"><i class="fas fa-check"></i> <span data-i18n="apiKeys.confirmAdd">Add Key</span></button>
+            <button class="btn btn-outline" id="ak-cancel-add"><i class="fas fa-times"></i> <span data-i18n="apiKeys.cancel">Cancel</span></button>
         </div>
     </div>
 
     <!-- Key List -->
     <div id="ak-list-container" class="ak-list-container">
-        <div class="chart-loading"><i class="fas fa-spinner fa-spin"></i> 加载中...</div>
+        <div class="chart-loading"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
     </div>
 
     <!-- Batch Actions -->
     <div id="ak-batch-bar" class="ak-batch-bar" style="display:none">
-        <span id="ak-selected-count">0 <span data-i18n="apiKeys.selected">项已选</span></span>
-        <button class="btn btn-sm btn-danger" id="ak-batch-delete"><i class="fas fa-trash"></i> <span data-i18n="apiKeys.batchDelete">批量删除</span></button>
+        <span id="ak-selected-count">0 <span data-i18n="apiKeys.selected">selected</span></span>
+        <button class="btn btn-sm btn-danger" id="ak-batch-delete"><i class="fas fa-trash"></i> <span data-i18n="apiKeys.batchDelete">Batch Delete</span></button>
     </div>
 </section>

@@ -1,51 +1,51 @@
-/* CSS变量 - 亮色主题（默认） */
+/* CSS Variables - Light Theme (Default) */
 :root {
-    /* 主色调 */
+    /* Primary Colors */
     --primary-color: #059669;
     --primary-hover: #047857;
     --primary-light: #34d399;
 
-    /* 辅助色 */
+    /* Secondary Colors */
     --secondary-color: #10b981;
     --success-color: #10b981;
     --danger-color: #ef4444;
     --warning-color: #f59e0b;
     --info-color: #3b82f6;
 
-    /* 背景色 */
+    /* Background Colors */
     --bg-primary: #ffffff;
     --bg-secondary: #f8fafc;
     --bg-tertiary: #f1f5f9;
     --bg-glass: rgba(255, 255, 255, 0.8);
 
-    /* 文本色 */
+    /* Text Colors */
     --text-primary: #0f172a;
     --text-secondary: #475569;
-    /* a11y：原 #94a3b8 在白底约 2.6:1 不达 AA；改 #64748b 约 4.8:1 达标 */
+    /* a11y: #64748b achieves ~4.8:1 contrast on white (WCAG AA) */
     --text-tertiary: #64748b;
 
-    /* 边框和分割线 */
+    /* Borders and Dividers */
     --border-color: #e2e8f0;
     --border-hover: #cbd5e1;
 
-    /* 阴影 */
+    /* Shadows */
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
     --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
     --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
 
-    /* 圆角 */
+    /* Border Radius */
     --radius-sm: 0.375rem;
     --radius-md: 0.5rem;
     --radius-lg: 0.75rem;
     --radius-xl: 1rem;
     --radius-full: 9999px;
 
-    /* 动画 */
+    /* Animations */
     --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 
-    /* 辅助色透明度版本 */
+    /* Secondary Color Opacities */
     --primary-10: rgba(5, 150, 105, 0.1);
     --primary-20: rgba(5, 150, 105, 0.2);
     --primary-30: rgba(5, 150, 105, 0.3);
@@ -54,13 +54,13 @@
     --danger-10: rgba(239, 68, 68, 0.1);
     --info-10: rgba(59, 130, 246, 0.1);
 
-    /* 遮罩背景 */
+    /* Overlay Background */
     --overlay-bg: rgba(0, 0, 0, 0.6);
 
-    /* 玻璃效果加强版 */
+    /* Enhanced Glass Effect */
     --bg-glass-strong: rgba(255, 255, 255, 0.95);
 
-    /* 信息/状态背景 */
+    /* Info / Status Backgrounds */
     --info-bg: rgba(59, 130, 246, 0.08);
     --info-bg-light: rgba(59, 130, 246, 0.04);
     --info-border: rgba(59, 130, 246, 0.2);
@@ -70,12 +70,12 @@
     --danger-bg: rgba(239, 68, 68, 0.1);
     --danger-text: #dc2626;
 
-    /* 代码块和日志区域 */
+    /* Code Blocks and Log Area */
     --code-bg: #1e1e1e;
     --code-text: #d4d4d4;
 }
 
-/* CSS变量 - 暗黑主题 */
+/* CSS Variables - Dark Theme */
 [data-theme="dark"] {
     --primary-color: #34d399;
     --primary-hover: #10b981;
@@ -129,7 +129,7 @@
     --danger-text: #fca5a5;
 }
 
-/* 基础样式 */
+/* Base Styles */
 * {
     margin: 0;
     padding: 0;
@@ -144,7 +144,7 @@ body {
     transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* 滚动条美化 */
+/* Scrollbar Styling */
 ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -163,14 +163,14 @@ body {
     background: var(--text-tertiary);
 }
 
-/* 容器 */
+/* Container */
 .container {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
 }
 
-/* 主要内容区域 */
+/* Main Content Container */
 .main-content {
     display: flex;
     flex: 1;
@@ -181,7 +181,7 @@ body {
     gap: 1.5rem;
 }
 
-/* 内容区域 */
+/* Content Area */
 .content {
     flex: 1;
     padding: 0;
@@ -211,7 +211,7 @@ body {
     margin-bottom: 1.5rem;
 }
 
-/* 统计卡片网格 */
+/* Stat Cards Grid */
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -288,7 +288,7 @@ body {
     color: var(--text-secondary);
 }
 
-/* 卡片 */
+/* Cards */
 .card {
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
@@ -314,7 +314,7 @@ body {
     color: var(--text-primary);
 }
 
-/* 信息网格 */
+/* Info Grid */
 .info-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -341,7 +341,7 @@ body {
     color: var(--text-primary);
 }
 
-/* 按钮 */
+/* Buttons */
 .btn {
     display: inline-flex;
     align-items: center;
@@ -426,7 +426,7 @@ body {
     font-size: 1rem;
 }
 
-/* 表单 */
+/* Forms */
 .form-group {
     margin-bottom: 1.25rem;
 }
@@ -480,7 +480,7 @@ textarea.form-control {
     resize: vertical;
 }
 
-/* 徽章 */
+/* Badges */
 .badge {
     display: inline-flex;
     align-items: center;
@@ -516,7 +516,7 @@ textarea.form-control {
     color: var(--text-secondary);
 }
 
-/* Toast 通知 */
+/* Toast Notifications */
 .toast-container {
     position: fixed;
     top: 1rem;
@@ -565,7 +565,7 @@ textarea.form-control {
     border-left: 4px solid var(--warning-color);
 }
 
-/* 模态框 */
+/* Modals */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -637,7 +637,7 @@ textarea.form-control {
     border-top: 1px solid var(--border-color);
 }
 
-/* 表格 */
+/* Tables */
 .table-container {
     overflow-x: auto;
     border-radius: var(--radius-lg);
@@ -675,7 +675,7 @@ tr:hover {
     background: var(--bg-secondary);
 }
 
-/* 账户卡片 */
+/* Account Cards */
 .accounts-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -715,7 +715,7 @@ tr:hover {
     margin-top: 1rem;
 }
 
-/* 提供商状态网格 */
+/* Provider Status Grid */
 .provider-status-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -734,7 +734,7 @@ tr:hover {
     box-shadow: var(--shadow-md);
 }
 
-/* 系统信息面板 */
+/* System Info Panel */
 .system-info-panel {
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
@@ -756,7 +756,7 @@ tr:hover {
     color: var(--text-primary);
 }
 
-/* 日志容器 */
+/* Log Container */
 .logs-container {
     background: var(--code-bg);
     border-radius: var(--radius-lg);
@@ -827,7 +827,7 @@ tr:hover {
     word-wrap: break-word;
 }
 
-/* 空状态 */
+/* Empty State */
 .empty-state {
     text-align: center;
     padding: 3rem 1rem;
@@ -840,7 +840,7 @@ tr:hover {
     opacity: 0.5;
 }
 
-/* 加载动画 */
+/* Loading Animations */
 .loading-spinner {
     display: inline-block;
     width: 20px;
@@ -851,7 +851,7 @@ tr:hover {
     animation: spin 0.8s linear infinite;
 }
 
-/* 工具类 */
+/* Utility Classes */
 .text-muted {
     color: var(--text-tertiary);
 }
@@ -884,7 +884,7 @@ tr:hover {
     justify-content: space-between;
 }
 
-/* 主题切换按钮 */
+/* Theme Toggle Button */
 .theme-toggle {
     display: inline-flex;
     align-items: center;
@@ -924,7 +924,7 @@ tr:hover {
     display: none;
 }
 
-/* 移动端菜单按钮 */
+/* Mobile Menu Toggle Button */
 .mobile-menu-toggle {
     display: none;
     background: var(--bg-tertiary);
@@ -967,7 +967,7 @@ summary:hover {
     color: var(--primary-color);
 }
 
-/* 模型列表 */
+/* Models List */
 .models-list {
     display: flex;
     flex-wrap: wrap;
@@ -984,7 +984,7 @@ summary:hover {
     color: var(--text-secondary);
 }
 
-/* 配置项 */
+/* Config Items */
 .config-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -1009,7 +1009,7 @@ summary:hover {
     font-family: 'Courier New', monospace;
 }
 
-/* 动画 */
+/* Animations */
 @keyframes fadeIn {
     from {
         opacity: 0;
@@ -1045,14 +1045,14 @@ summary:hover {
     }
 }
 
-/* ===== 无障碍 a11y ===== */
-/* 键盘可见焦点环（WCAG 2.4.7）：仅键盘聚焦时出现，不影响鼠标点击体验 */
+/* ===== Accessibility (a11y) ===== */
+/* Visible focus rings for keyboard navigation (WCAG 2.4.7) */
 :focus-visible {
     outline: 2px solid var(--primary-color);
     outline-offset: 2px;
 }
 
-/* 暗色主题：主色 #34d399 偏亮，白字对比度仅 ~1.9:1；改用深色字 ~9:1 达 AA */
+/* Dark theme: dark text on #34d399 achieves ~9:1 contrast for WCAG AA */
 [data-theme="dark"] .btn-primary,
 [data-theme="dark"] .btn-success {
     color: #0b1f17;

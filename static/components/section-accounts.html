@@ -2,9 +2,9 @@
 <!-- Accounts Section -->
 <section id="accounts" class="section" aria-labelledby="accounts-title">
     <div class="section-header">
-        <h2 id="accounts-title" data-i18n="accounts.title">账号管理</h2>
+        <h2 id="accounts-title" data-i18n="accounts.title">Accounts</h2>
         <button class="btn btn-primary" id="addAccountBtn">
-            <i class="fas fa-plus"></i> <span data-i18n="accounts.add">添加账号</span>
+            <i class="fas fa-plus"></i> <span data-i18n="accounts.add">Add Account</span>
         </button>
     </div>
 
@@ -18,28 +18,28 @@
 <div id="addAccountModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="addAccountTitle">
     <div class="modal-content">
         <div class="modal-header">
-            <h3 id="addAccountTitle" data-i18n="accounts.add">添加账号</h3>
+            <h3 id="addAccountTitle" data-i18n="accounts.add">Add Account</h3>
             <button class="modal-close" aria-label="Close">
                 <i class="fas fa-times"></i>
             </button>
         </div>
         <div class="modal-body">
             <div class="form-group">
-                <label for="add-label" data-i18n="accounts.labelName">标签名称</label>
-                <input type="text" id="add-label" class="form-control" data-i18n-placeholder="accounts.labelPlaceholder" placeholder="例如: 主账号">
+                <label for="add-label" data-i18n="accounts.labelName">Label</label>
+                <input type="text" id="add-label" class="form-control" data-i18n-placeholder="accounts.labelPlaceholder" placeholder="e.g. Primary Account">
             </div>
             <div class="form-group">
                 <label for="add-psid">__Secure-1PSID <span class="required">*</span></label>
-                <input type="text" id="add-psid" class="form-control" data-i18n-placeholder="accounts.psidPlaceholder" placeholder="输入 __Secure-1PSID" required>
+                <input type="text" id="add-psid" class="form-control" data-i18n-placeholder="accounts.psidPlaceholder" placeholder="Enter __Secure-1PSID" required>
             </div>
             <div class="form-group">
                 <label for="add-psidts">__Secure-1PSIDTS <span class="required">*</span></label>
-                <input type="text" id="add-psidts" class="form-control" data-i18n-placeholder="accounts.psidtsPlaceholder" placeholder="输入 __Secure-1PSIDTS" required>
+                <input type="text" id="add-psidts" class="form-control" data-i18n-placeholder="accounts.psidtsPlaceholder" placeholder="Enter __Secure-1PSIDTS" required>
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary modal-cancel" data-i18n="confirm.cancel">取消</button>
-            <button class="btn btn-primary" id="confirmAddAccount" data-i18n="accounts.confirmAdd">确认添加</button>
+            <button class="btn btn-secondary modal-cancel" data-i18n="confirm.cancel">Cancel</button>
+            <button class="btn btn-primary" id="confirmAddAccount" data-i18n="accounts.confirmAdd">Add Account</button>
         </div>
     </div>
 </div>
@@ -48,7 +48,7 @@
 <div id="updateCookieModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="updateCookieTitle">
     <div class="modal-content">
         <div class="modal-header">
-            <h3 id="updateCookieTitle" data-i18n="accounts.updateCookie">更新 Cookie</h3>
+            <h3 id="updateCookieTitle" data-i18n="accounts.updateCookie">Update Cookie</h3>
             <button class="modal-close" aria-label="Close">
                 <i class="fas fa-times"></i>
             </button>
@@ -56,16 +56,16 @@
         <div class="modal-body">
             <div class="form-group">
                 <label for="update-psid">__Secure-1PSID <span class="required">*</span></label>
-                <input type="text" id="update-psid" class="form-control" data-i18n-placeholder="accounts.newPsidPlaceholder" placeholder="输入新的 __Secure-1PSID" required>
+                <input type="text" id="update-psid" class="form-control" data-i18n-placeholder="accounts.newPsidPlaceholder" placeholder="Enter new __Secure-1PSID" required>
             </div>
             <div class="form-group">
                 <label for="update-psidts">__Secure-1PSIDTS <span class="required">*</span></label>
-                <input type="text" id="update-psidts" class="form-control" data-i18n-placeholder="accounts.newPsidtsPlaceholder" placeholder="输入新的 __Secure-1PSIDTS" required>
+                <input type="text" id="update-psidts" class="form-control" data-i18n-placeholder="accounts.newPsidtsPlaceholder" placeholder="Enter new __Secure-1PSIDTS" required>
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary modal-cancel" data-i18n="confirm.cancel">取消</button>
-            <button class="btn btn-primary" id="confirmUpdateCookie" data-i18n="accounts.confirmUpdate">确认更新</button>
+            <button class="btn btn-secondary modal-cancel" data-i18n="confirm.cancel">Cancel</button>
+            <button class="btn btn-primary" id="confirmUpdateCookie" data-i18n="accounts.confirmUpdate">Update Cookie</button>
         </div>
     </div>
 </div>

@@ -1,8 +1,8 @@
 /* ========================================
-   移动端优化样式
+   Mobile Optimization Styles
    ======================================== */
 
-/* 移动端汉堡菜单按钮 */
+/* Mobile Hamburger Menu Toggle */
 .mobile-menu-toggle {
     display: none;
     background: var(--bg-tertiary);
@@ -26,22 +26,22 @@
 }
 
 /* ========================================
-   移动端适配 (最大宽度 768px)
+   Mobile Responsive Styles (Max Width 768px)
    ======================================== */
 @media (max-width: 768px) {
-    /* 显示汉堡菜单按钮 */
+    /* Show Hamburger Button */
     .mobile-menu-toggle {
         display: flex !important;
     }
 
-    /* 主内容区域 */
+    /* Main Content Area */
     .main-content {
         flex-direction: column;
         gap: 1rem;
         padding: 1rem;
     }
 
-    /* 侧边栏移动端样式 */
+    /* Mobile Sidebar Styles */
     .sidebar {
         width: 100%;
         border: none;
@@ -49,7 +49,7 @@
         padding: 0.5rem;
     }
 
-    /* 内容区域 */
+    /* Content Area */
     .content {
         padding: 0;
     }
@@ -59,7 +59,7 @@
         margin-bottom: 1rem;
     }
 
-    /* 统计卡片 */
+    /* Stat Cards */
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 0.75rem;
@@ -94,14 +94,14 @@
         min-height: 100px;
     }
 
-    /* 按钮优化 */
+    /* Button Adjustments */
     .btn {
         padding: 0.625rem 1rem;
         font-size: 0.8125rem;
         border-radius: var(--radius-md);
     }
 
-    /* 信息网格 */
+    /* Info Grid */
     .info-grid {
         grid-template-columns: 1fr;
         gap: 0.75rem;
@@ -128,13 +128,13 @@
         color: var(--text-primary);
     }
 
-    /* 账户卡片 */
+    /* Account Cards */
     .accounts-grid {
         grid-template-columns: 1fr;
         gap: 0.75rem;
     }
 
-    /* 日志容器 */
+    /* Log Container */
     .logs-container {
         height: calc(100vh - 280px);
         min-height: 300px;
@@ -143,7 +143,7 @@
         border-radius: var(--radius-sm);
     }
 
-    /* Toast 通知 */
+    /* Toast Notifications */
     .toast-container {
         left: 1rem;
         right: 1rem;
@@ -151,7 +151,7 @@
         pointer-events: none;
     }
 
-    /* 模态框 */
+    /* Modals */
     .modal-content {
         max-width: 95%;
         max-height: 90vh;
@@ -187,7 +187,7 @@
         gap: 1rem;
     }
 
-    /* 配置网格 */
+    /* Config Grid */
     .config-grid {
         grid-template-columns: 1fr;
         gap: 0.75rem;
@@ -195,10 +195,10 @@
 }
 
 /* ========================================
-   小屏幕移动设备 (最大宽度 480px)
+   Small Screen Mobile Devices (Max Width 480px)
    ======================================== */
 @media (max-width: 480px) {
-    /* 统计卡片 */
+    /* Stat Cards */
     .stats-grid {
         grid-template-columns: 1fr;
         gap: 0.625rem;
@@ -214,21 +214,21 @@
         font-size: 1.125rem;
     }
 
-    /* 表单控件 */
+    /* Form Controls */
     .form-control {
-        font-size: 16px; /* 防止iOS自动缩放 */
+        font-size: 16px; /* Prevent iOS auto-zoom */
     }
 
     select.form-control {
         font-size: 16px;
     }
 
-    /* Section标题 */
+    /* Section Title */
     .section h2 {
         font-size: 1.125rem;
     }
 
-    /* 日志 */
+    /* Logs */
     .logs-container {
         font-size: 0.625rem;
         padding: 0.5rem;
@@ -246,7 +246,7 @@
         padding: 0.625rem 0.75rem;
     }
 
-    /* 模态框进一步优化 */
+    /* Modal Mobile Optimization */
     .modal {
         width: 98%;
         max-width: 98%;
@@ -270,10 +270,10 @@
 }
 
 /* ========================================
-   触摸优化
+   Touch Optimization
    ======================================== */
 @media (hover: none) and (pointer: coarse) {
-    /* 增加可点击区域 */
+    /* Expand Clickable Area */
     .btn {
         min-height: 44px;
         padding: 0.625rem 1rem;
@@ -285,7 +285,7 @@
 }
 
 /* ========================================
-   打印样式
+   Print Styles
    ======================================== */
 @media print {
     .mobile-menu-toggle,
@@ -310,7 +310,7 @@
 }
 
 /* ========================================
-   辅助功能优化
+   Accessibility Enhancements
    ======================================== */
 @media (prefers-reduced-motion: reduce) {
     *,

@@ -1,6 +1,6 @@
 # Changelog
 
-本文件记录项目的所有重要变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
@@ -15,625 +15,422 @@
   - Added action-forcing instruction in default tool-calling system prompts to deter models from hedging with plain text when actions or tool invocations are requested.
 - 🌐 **Web Console & Documentation Localization (Zero Chinese Defaults)**:
   - Switched default UI language in `static/app/i18n.js` from `zh-CN` to `en-US`.
-  - Fully translated `static/login.html`, `static/index.html`, `static/components/` (header, sidebar, dashboard), and `SPONSORS.md` to English.
+  - Fully translated `static/login.html`, `static/index.html`, `static/components/` (header, sidebar, dashboard, accounts, api-keys, config, gems, logs, playground, settings, usage-stats), and `SPONSORS.md` to English.
   - Routed dashboard QR cards and image assets locally through `/api-assets` to avoid pulling upstream Chinese cards from raw GitHub.
 
 ---
 
 ## [1.6.41-argon] - 2026-10-14 (badmarsh/gemini2api fork)
 
-> 针对 **Gemini 4 Argon** 强制思考协议更新、长时间推理挂起、Google Web 错误模板探测与多轮 Coding Agent 会话保活的专项强化版本。
+> Dedicated hardened release for **Gemini 4 Argon** mandatory thinking protocols, deep reasoning timeouts, Google Web error template interception, and multi-turn coding agent context retention.
 
 ### Added
-- 🧠 **Gemini 4 Argon 协议适配 (StreamGenerate 81 项载荷)**：适配 2026 年 10 月 Google Gemini Web 接口协议变化。支持 81 项 thinking payload 结构、`f.sid`/`bl` 追踪参数与 15 项 companion headers。对 Argon 模型强制开启内部思考状态 (`inner[80]=2`)，解决旧版 4 项载荷静默黑洞无响应的问题。
-- 🛡️ **Google Web 错误模板自动拦截与即时 Failover**：当 Gemini Web 界面吐出如 `"I seem to be encountering an error. Can I try something else for you?"` 或 `"Sorry, something went wrong"` 等模板错误时，不再原样作为回答流出，而是判定为 `GoogleWebError`，使当前账号进入 cooldown 冷却，并无缝 failover 到池中下一个健康账号重试。
-- ⏱️ **会话挂死检测与账号自愈 (_is_stall)**：在 `account_pool.py` 中引入挂死与超时探测，对连接卡死或首帧超时的账号迅速释放并冷却，防止后续请求持续阻塞在失效客户端上。
-- 🍪 **Cookie Jar 白名单过滤 (终结 168 字节卡死)**：`cookie_jar.py` 严格白名单持久化 `__Secure-1PSID` 与 `__Secure-1PSIDTS`，自动过滤 `NID`、`SIDCC`、`AEC`、`OTZ` 等易变反滥用 Cookie，彻底杜绝跨进程重放易变 Cookie 引起的 168 字节响应流中断挂死。
-- 🚦 **错峰启动防限流**：容器重启或账号池批量初始化时，各账号之间增加 4 秒错峰延迟，避免同一出口 IP 短时间并发打 `/app` 和 `batchexecute` 触发 Google `identity.hfcr` 限流。
-- 🛠️ **OpenAI API developer role 映射**：OpenAI 格式消息列表中的 `developer` 角色（Codex / OpenCode / o1/o3-mini 标准）自动转换为 `System: <content>`。
+- 🧠 **Gemini 4 Argon Protocol Adaptation (StreamGenerate 81-element payload)**: Supports the October 2026 Google Gemini Web UI protocol shift. Implements the 81-element thinking payload structure, `f.sid`/`bl` tracking parameters, and 15-element companion headers. Enforces active internal thinking (`inner[80]=2`) on Argon models, eliminating the silent black-hole stall from legacy 4-element payloads.
+- 🛡️ **Google Web Error Template Interception & Seamless Failover**: When the Gemini Web interface returns boilerplate errors (such as `"I seem to be encountering an error. Can I try something else for you?"` or `"Sorry, something went wrong"`), they are intercepted as `GoogleWebError`, putting the account into cooldown and automatically failing over to the next healthy account.
+- ⏱️ **Stall Detection & Self-Healing (`_is_stall`)**: Introduced connection hang and first-byte timeout detection in `account_pool.py`, quickly releasing and cooling down stalled accounts to prevent blocking subsequent requests.
+- 🍪 **Cookie Jar Whitelisting (Eliminating 168-byte Stream Stalls)**: `cookie_jar.py` strictly whitelists `__Secure-1PSID` and `__Secure-1PSIDTS`, filtering out volatile anti-abuse cookies (`NID`, `SIDCC`, `AEC`, `OTZ`) and completely preventing cross-process volatile cookie replay stalls.
+- 🚦 **Staggered Startup Rate-Limit Protection**: Adds a 4-second delay between account initializations during container boot, preventing simultaneous `/app` and `batchexecute` bursts from triggering Google's `identity.hfcr` rate limit on shared egress IPs.
+- 🛠️ **OpenAI API `developer` Role Mapping**: Messages using the `developer` role (Codex, OpenCode, o1/o3-mini standards) are mapped to `System: <content>`.
 
 ### Changed
-- ⌛ **长思考超时放宽至 180s**：`_GENERATE_TIMEOUT_DEFAULT` 与底层 `AsyncSession` 超时由 60s 提升至 180s，完美适配 Gemini 4 Argon 深度思考阶段（普遍需要 30–75s 思考）而不触发客户端或网关断连。
-- 💬 **多轮 Agent 历史完整保留**：当外部 Coding Agent（如 Codex、OpenCode、Antigravity、OpenAI SDK）携带多轮历史调用接口时，优先保留完整上下文并清空 `gemini_conv_id`，防止跨账号负载均衡时因云端单账号会话不存在而导致的截断与上下文丢失。
-- 🔑 **管理员 Cookie 重置修复**：通过 `/admin/accounts/{id}/cookies` 更新凭据后，自动将账号状态复位为 `ACTIVE`，清零连续失败计数并清除错误信息，立即持久化落盘。
-- 📦 **依赖升级**：`curl_cffi` 升级至 `0.16.3`。
+- ⌛ **180s Extended Reasoning Timeout**: `_GENERATE_TIMEOUT_DEFAULT` and the underlying `AsyncSession` timeout increased from 60s to 180s, accommodating Gemini 4 Argon deep reasoning passes (typically 30–75s) without triggering client or gateway disconnections.
+- 💬 **Full Coding Agent Multi-Turn Context Retention**: When external coding agents (Codex, OpenCode, Antigravity, OpenAI SDK) provide full conversation history, the context is preserved in full and stale `gemini_conv_id` references are cleared, preventing cross-account session dropouts.
+- 🔑 **Admin Cookie Reset Auto-Activation**: Updating credentials via `/admin/accounts/{id}/cookies` automatically resets account status to `ACTIVE`, clears failure counters, and persists changes immediately.
+- 📦 **Dependency Upgrade**: Upgraded `curl_cffi` to `0.16.3`.
+
+---
 
 ## [1.6.40] - 2026-09-12
 
-> 来自 [issue #11](https://github.com/xwteam/gemini2api/issues/11) 追加反馈的排查成果。报告人贴出的面板截图显示账号 **ACTIVE / Errors 0 / Models 4**、聊天框却只有一句「无响应内容」——排查后发现**这四个数字没有一个能用**，面板在故障时会掩盖真实原因。本版专治这一点。
-
 ### Fixed
-- 🔍 **模型测试页不再把真实错误显示成「无响应内容」**：流式响应的 HTTP 状态在第一个字节发出时就定死为 200，之后的失败只能以流内 error 帧表达。后端一直在发（`{"error":{"message","type","code"}}`），但前端只读 `chunk.choices[0].delta`，error 帧没有 `choices` → 取不到内容 → 落到「无响应内容」。
-  **于是 `503 会话已失效`、`529 账号池打满`、`500`、`400` 全部长得一模一样**，用户和维护者都无从判断。现在会显示 `网关错误 (503): <真实原因>`；若错误发生在已经输出内容之后，**已收到的内容会保留**，错误追加在后面。错误文本走安全渲染，上游消息不会被当 HTML 执行。
-- 🪵 **启动时明说 cookie 轮换循环有没有起来**：`Auto-refresh loop started / NOT started (原因)`。此前无论跑没跑，日志里都看不出来——而它**只在「启动时拿不到 token」或「手动重载 cookie」之后才启动**，正常启动的网关根本不跑它。这一行是排查「cookie 过一阵就失效」类问题的关键线索。
+- 🔍 **Playground Error Visibility**: Stream error frames now properly display `Gateway Error (503): <reason>` instead of masking failures as "No response content". Error messages are sanitized to prevent stored XSS.
+- 🪵 **Cookie Rotation Lifecycle Logging**: Explicit startup logs show whether the auto-refresh loop has started (`Auto-refresh loop started / NOT started (reason)`).
 
 ### Added
-- 🩺 **账号卡片显示真实健康信息**：新增导出 `is_healthy`、`consecutive_failures`、`last_success_at`、`last_error`(+发生时间)。
-  此前面板上的绿色 `ACTIVE` 徽章读的是池里的 `status` 枚举，**不是**客户端的健康位——cookie 已经彻底失效的账号照样显示绿色（`status` 只在连续 3 次计数失败或 401/403 时才变 `EXPIRED`）。现在「状态是 active 但客户端不健康」会给出醒目提示，并显示最近一次成功生成的时间。
-  - `last_error` **只保留异常类型 + HTTP 状态码，刻意丢弃原文**：原文里可能嵌着 Google 响应正文的前 200 字节（含登录态标识 / token / 账号邮箱），而模型不可用类异常的消息里带客户端可控的 model 名，原样渲染会变成面板的存储型 XSS 入口。
-- 📉 **空响应单独计数，不再被当成成功悄悄咽下去**：上游返回 HTTP 200 但正文解析不出内容时，此前会走 `release(success=True)` —— 错误计数不动、连续失败计数还被清零，账号永远不会因此被标记异常，面板上完全看不出来。现在单独统计连续空响应，面板可见。
-  - **单次空响应绝不降级账号**（用户确实可能问出一次空回答），连续 **3** 次才计入错误计数；任何一次非空成功立即清零。
-  - 「只有思考过程没有正文」「只有图片没有文字」**不算空**。
-  - ⚠️ **这扩展了 `error_count` 的含义**：连续空响应达阈值后每多一次会给它 +1，而该字段同时喂着「用量统计」页的错误率曲线。一个卡在空响应里的账号会把那条曲线顶起来，尽管一次异常都没抛——看历史曲线时请知悉。
+- 🩺 **Accurate Account Health Diagnostics**: Account cards export `is_healthy`, `consecutive_failures`, `last_success_at`, and `last_error` (sanitized exception type and HTTP code), ensuring account health is clear even when marked active.
+- 📉 **Consecutive Empty Response Tracking**: Consecutive empty responses are tracked separately and trigger error increments only after 3 consecutive occurrences, preventing false-positive account degradation.
 
-### Notes
-- 本版**未**改动 PSIDTS 轮换的启动时机（见上面那条日志说明的现状）。让它常驻会增加对 Google 的请求频次与风控面，需要先在真实账号上做长时间验证，故单独评估。
+---
 
 ## [1.6.39] - 2026-09-01
 
 ### Changed
-
-- ⚠️ **行为变更：面板改过的设置项优先级高于环境变量。** Web 面板「设置」页保存过的项现在会写进
-  `data/settings-overrides.json`（`data/` 是 docker-compose 的持久 bind mount），并在每次启动时回放，
-  **覆盖**同名环境变量。此前 compose 用 `env_file: .env` 注入的是**真实环境变量**，其优先级高于容器内的
-  dotenv 文件，而宿主机 `.env` 根本没挂进容器 —— 面板写的是容器内临时的 `/app/.env`，于是"面板上关掉
-  `LOG_BODIES_ENABLED`、提示保存成功、`docker compose restart` 之后又在记录用户完整提示词"。
-  该行为对全部 20 个面板可编辑字段生效。
-  **升级影响**：若你依赖 `.env` / compose 环境变量来设定这些字段，而该字段曾在面板里被保存过，
-  环境变量将不再生效。启动日志会点名被覆盖的字段
-  （`Applied N panel setting override(s) from data/settings-overrides.json: ...`）；
-  删除 `data/settings-overrides.json` 可把控制权交回环境变量。
+- ⚠️ **Settings Override Precedence**: Runtime settings modified via the Web Console are stored in `data/settings-overrides.json` and take precedence over environment variables across restarts.
 
 ### Added
-
-- ⚙️ **`LOG_BODIES_ENABLED` 接入管理面板**：新增「日志」分组，可在面板直接开关请求/响应体记录，无需改配置重启。
+- ⚙️ **`LOG_BODIES_ENABLED` Console Toggle**: Added request/response body logging switch directly to the settings dashboard.
 
 ### Fixed
+- 🧊 **Static Assets Cache Validation**: Added `Cache-Control: no-cache` with ETags to `.js`, `.css`, `.html`, and `.json` static assets to prevent stale script caching.
+- 🔢 **Decimal Float Preservations**: Fixed float truncation in cleanup intervals and duration inputs.
+- 🛡️ **Invalid Float Rejection**: Rejects `NaN` and `±Infinity` from entering configuration fields.
+- 💾 **All-or-Nothing Settings Persistence**: Transactional rollbacks across in-memory state, overrides file, and `.env`.
 
-- 🧊 **面板静态资源改为每次回源校验**：给面板的 `.js` / `.css` / `.html` / `.json` 加上
-  `Cache-Control: no-cache`（仍保留 ETag，命中即 304）。此前 `index.html` 只给 `app.js` 等挂了 `?v=` 版本串，
-  而 `import './settings.js'` 这类裸模块说明符带不上查询串，升级后可能拿到"新 settings.js + 旧 i18n.js"
-  的半旧状态，界面直接显示 `settings.field.logBodiesEnabled` 这种原始 i18n 键。
-  裸地址 `/`（管理员实际收藏的入口）同样纳入 —— 它此前会落到 StaticFiles 挂载而拿不到该响应头，GET 与 HEAD 都已覆盖。
-- 🔢 **面板里的小数字段不再被静默截断**：`CHAT_CLEANUP_KEEP_HOURS` / `CHAT_CLEANUP_INTERVAL_HOURS`
-  后端声明为 float，但前端一律 `parseInt`，输入 `0.5` 会变成 `0`（`0` 能通过 `>= 0` 校验，于是"保存成功"
-  地存成 0，而运行时被 `max(1.0, x)` 兜成 1 小时）。改为按后端字段类型判定 `parseInt` / `parseFloat`。
-- 🛡️ **拒绝 NaN / ±Infinity 写入设置**：二者都是合法 Python float 且 `inf < 0` 为假，会绕过全部取值域校验
-  被持久化并每次启动回放；`chat_cleanup_interval_hours=inf` 会让清理循环 `asyncio.sleep(inf)` 永不唤醒。
-- 💾 **保存设置改为「全有或全无」**：`data/` 或 `.env` 不可写（自定 compose `user:`、rootless podman uid 映射、
-  只读卷）时接口返回 500，但改动此前已经落在内存和优先级最高的覆盖文件里 —— 管理员看到"保存失败"，
-  **隐私开关其实已经被打开，并且会在下次重启时生效**。现在内存 / `data/settings-overrides.json` / `.env`
-  三层中任何一层失败，都会按写入逆序还原全部已完成的步骤（包括删掉本来不存在、刚被创建出来的覆盖文件），
-  接口才返回 500。同时 500 的错误详情不再把容器内绝对路径和原子写临时文件名回给浏览器。
+---
 
 ## [1.6.38] - 2026-09-01
 
 ### Fixed
-- 🍪 **修复「同名 Cookie 跨域并存」导致会话获取整体失败（issue #10 追加反馈）**：当 Google 把你重定向到国家域名（`.google.com.hk` / `.com.tw` / `.co.jp` 等）时，`NID` 之类的 Cookie 会同时存在于两个域，而底层 HTTP 库在按名取值时会直接抛 `CookieConflict`。该异常会中断整个 Cookie 更新流程并冒泡到会话令牌获取，日志表现为 `Token extraction failed: Multiple cookies exist with name=NID ...` → 账号被标记为不健康。
-  - 现改为逐个 Cookie 对象读取（天然无同名冲突），同名多域时**确定性**优先采用规范域（`*.google.com`）的值；并给整个 Cookie 更新加了兜底，**Cookie 层的问题不再有机会打断会话获取**。
-  - 这也是 [issue #11](https://github.com/xwteam/gemini2api/issues/11) 里「跑一阵就卡死」的一个真实触发源；且 v1.6.37 的按需自愈**救不了这一条**（自愈同样要走会话获取，会撞同一个异常），因此本版是该场景的必要补充。
-- 🔁 **工具调用 JSON 畸形时自动重新生成一次**：Gemini 网页版没有原生 function calling，工具调用靠提示词模拟，模型偶尔会输出被截断或转义错误的 JSON，此前直接放弃并回复「模型返回的工具调用格式有误」。现在会**自动重新生成一次**再解析（仅一次、仅在声明了工具且判定为畸形时；重试期间流式连接有保活心跳，不会静默断开）。
-  - 明确**不做**「截断 JSON 自动补全」——补全等于拿猜出来的参数去执行工具，风险远大于收益。
-- 🛡️ 日志记录失败不再截断响应：响应体在任何情况下都完整返回给客户端，记录失败只会丢掉日志字段。
+- 🍪 **Multi-Domain Cookie Conflict**: Resolved `CookieConflict` exceptions when Google redirects across country domains (`.google.com.hk`, `.com.tw`, `.co.jp`) by reading individual cookie objects and prioritizing `*.google.com`.
+- 🔁 **Automatic Retry for Malformed Tool Call JSON**: Automatically retries generation once with live SSE keepalives if simulated tool calling outputs malformed JSON.
+- 🛡️ Non-blocking response logging: Logging failures no longer interrupt client responses.
 
 ### Added
-- 🔍 **可开关的完整请求/响应记录**（`LOG_BODIES_ENABLED`，**默认关**）：开启后可在面板「实时日志」的详情里看到 `/v1/messages` 等接口的完整请求参数与响应内容，便于排查工具调用等问题。
-  - **只记 body、不记任何请求头**（Authorization 等凭据不进日志）；**流式响应只记一个标记、绝不缓冲整个流**；单条上限 4KB。
-  - **body 只存在于内存中，不写入磁盘**：`data/logs.json` 不会包含用户提示词，重启后不留痕，磁盘占用与开关关闭时一致。
+- 🔍 **Optional Full Request/Response Body Logging (`LOG_BODIES_ENABLED`)**: Kept in-memory only (max 4KB, credentials scrubbed) for debugging tool interactions.
+
+---
 
 ## [1.6.37] - 2026-08-30
 
 ### Fixed
-- 🩺 **修复账号池永久卡死并误报「All accounts busy」（[issue #11](https://github.com/xwteam/gemini2api/issues/11)）**：当账号的会话失效（Google 轮换 `__Secure-1PSIDTS` 后拿不到 session token）时，账号在池里的状态仍是 `active`（所以面板看着 cookie 正常），但挑选账号时会因「不健康」而跳过它。旧代码判断「是不是只是忙」时**只看状态、不看健康**，于是每个请求都去排队等满 `ACQUIRE_TIMEOUT`（默认 60 秒），最后抛出 `All accounts busy (max_concurrent=8)` → HTTP 529。**这条信息是错的：并发槽位占用其实是 0。**
-  - 现在两处判断口径一致；这种情况会**立即**返回准确的 `503 No healthy account (session expired, cookie refresh required)`，不再让人误以为是并发或 cookie 过期问题。
-  - 并且会**自动尝试自愈**：检测到「活跃但会话失效」的账号时，池会在**不持锁**的前提下调用一次 cookie 重载来恢复会话（单账号也能自己爬起来）。自愈是单飞的（并发请求只触发一次）、失败后有冷却（不会对上游形成请求潮）、且受本次请求的剩余超时预算约束。
-  - 此前这种状态**无法自愈**：池的恢复逻辑只在「完全没有活跃账号」时才跑；客户端自带的自愈代码因为池从不把账号交出去而是死代码。
-- 🛑 **客户端断连不再被算作账号失败**：中途断开（例如点「停止」）此前会走失败计数，**连续 3 次就把账号标记为 EXPIRED**——单账号部署点三次停止就会瘫痪。现在断连只归还并发槽位并唤醒排队者，不累加失败计数；真实的上游失败仍照常计数与过期。
-- 🔄 **cookie 重载失败不再永久拉黑一个本来健康的账号**：重载会在开始前快照会话状态，失败时完整回滚（不再出现「标记为健康但没有 session token」的中间态）。
+- 🩺 **Account Pool Lockup Resolution**: Corrected pool selection logic where unhealthy accounts with expired sessions previously caused false `529 All accounts busy` errors. Added non-blocking self-healing reloads.
+- 🛑 **Client Disconnect Accounting**: Early client disconnects no longer increment account failure counters or mark accounts as `EXPIRED`.
+- 🔄 **Safe Cookie Reload Rollbacks**: Failed cookie reloads roll back cleanly without leaving orphan states.
 
-### Notes
-- 若你的账号池是**健康但真的满载**，行为完全不变：仍然排队等待、仍在有槽位时被唤醒、超时仍返回原来的 `All accounts busy` → 529。
-- 本版**未**改动 PSIDTS 自动轮换的启动时机（目前仅在启动失败或手动重载 cookie 后启动）。让它在正常启动时也常驻会显著增加对 Google 的请求频次与风控面，已有的按需自愈已能解决卡死问题，故此项留作单独评估。
+---
 
 ## [1.6.36] - 2026-08-28
 
 ### Fixed
-- 🚨 **OpenAI 流式的上游错误不再伪装成正常回答**：此前失败会以 `content: "Error: ..."` + `finish_reason: "stop"` 发出，官方 SDK 视为一次**成功完成**、不抛异常、无法重试。现改为发出标准的 `data: {"error": {...}}` 帧（openai-python 会据此抛 `APIError`），错误类型沿用统一的 `classify_error`。v1.6.35 只修了 Anthropic 侧，本版补齐 OpenAI 侧。
-- 🚦 上游 4xx 的错误类型细化：400/401/403/404 → `invalid_request_error`（此前一律 `api_error`），429 仍为 `rate_limit_error`，5xx 仍为 `api_error`；状态码透传不变。
-- 📐 Anthropic 响应的 `citations` 字段在流式与非流式之间保持一致（此前只有流式帧带）；同时 v1.6.35 去掉的 `id/name/input/source` null 噪音**保持不变**。
-- 🛡️ `build_prompt_from_messages` 对非字符串 `content`（dict/数字等）不再抛 `TypeError`（此前一次模型放宽就会变成 500）；既有字符串/数组输入的输出逐字节不变。
+- 🚨 **OpenAI Streaming Error Frames**: Emits standard `data: {"error": {...}}` frames instead of disguised successful stops on upstream failures.
+- 🚦 Standardized 4xx HTTP error mapping to `invalid_request_error`.
+- 📐 Synchronized citation fields between streaming and non-streaming Anthropic endpoints.
+- 🛡️ Tolerates non-string message contents without raising `TypeError`.
 
-### Notes
-- 生图意图检测的习语排除表**维持 v1.6.35 的内容**（`draw a line/map/card` 等仍视为习语）。本版曾尝试放宽以提高真实画图请求的召回，但评审实测发现：编程语境里 `"draw a line under this discussion"` 这类句子会让**客户端声明的 tools 被静默丢弃**。两种误判代价不对称——误判为图片会让 agent 循环无声损坏，漏判只是当次不走生图分支且用户可改述——故按"宁可保住工具"的方向回退。
+---
 
 ## [1.6.35] - 2026-08-28
 
 ### Fixed
-- 🛠️ **修复「生图意图误判导致客户端工具被静默丢弃」**（影响全部四个协议）：意图检测此前扫描整个拍平后的 prompt 且无词边界，系统提示词、历史消息、甚至**工具执行结果正文**里出现「image / 绘制」等字样就会命中，进而丢掉客户端声明的 tools、并把请求甩到错误处理更差的分支。现改为**只看最后一轮用户消息**（跳过工具结果/附件块）+ 英文词边界与习语排除（`draw a conclusion` 之类不再误判），真实画图请求（`draw a cat` 等）照常识别。
-- 🚨 **上游错误不再伪装成正常回答**：Anthropic 流式路径此前把上游失败渲染成一段助手文本并以 `stop_reason: end_turn` 收尾，客户端既不抛异常也无法重试，错误文本还会被写进对话历史。现改为发出标准的 `event: error` 帧并终止。
-- 🚦 **错误状态码映射修正**：`HTTPStatusError` 不是 `RuntimeError` 子类，此前在三个路由里都逃逸成裸 500（还会跳过第三方兜底）。现统一由 `classify_error` 映射：上游 429 → 429 `rate_limit_error`、账号池满/忙 → **529 `overloaded_error` + `Retry-After`**（此前是不可重试的 400）、其它 → 500 / 400。
-- 🌊 **补齐两条漏掉的流式保活**：`/v1/responses` 与 native Gemini 的 **buffered 分支**此前没有心跳（v1.6.31 只覆盖了 real-stream 分支）。Codex 恒带 tools 必走前者；后者更是**首字节零输出**，会被网关首字节超时直接掐断。
-- 🔌 **原生 Gemini 路由现在接受官方 SDK 的 camelCase 报文**：此前 `systemInstruction` / `generationConfig` / `inlineData` 会被静默丢弃（系统提示词与附件直接消失），`functionCall` / `functionResponse` 也不进 prompt。snake_case 写法保持兼容。
-- 🧰 **OpenAI 的 `tool_calls` 不再在拍平时被整体丢弃**，`content: null` 也不再渲染成字面量 `None`；**第三方 Anthropic 转发**补上请求侧格式转换（`role:"tool"` → `tool_result`、`tool_calls` → `tool_use`），工具循环不再第二轮硬失败。
-- 📐 **Anthropic 响应结构对齐规范**：不再发送非标准的 assistant `image` 块（官方 SDK 无此类型，会把图片吞掉），生成的图片改为以 Markdown 形式并入文本；内容块不再携带 `id/name/input/source` 等 null 噪音；`usage` 补上 `cache_creation_input_tokens` / `cache_read_input_tokens` / `service_tier`；流式帧补上 `stop_sequence` / `stop_reason` / `citations`；空回答不再产生空内容块或零长度增量。
+- 🛠️ **Image Intent Detection Scope**: Scoped image intent detection strictly to the final user message with boundary matching and idiom exclusions (`draw a conclusion`, `draw a line`), preventing unintended suppression of tools in agent turns.
+- 🚨 Standardized `event: error` frame emission on Anthropic streaming errors.
+- 🚦 Standardized error mapping via `classify_error` (including 529 `overloaded_error` with `Retry-After`).
+- 🌊 Added keepalive heartbeats to `/v1/responses` and native Gemini buffered streaming paths.
+- 🔌 Supported camelCase parameters (`systemInstruction`, `generationConfig`, `inlineData`) from official Gemini SDKs.
+- 🧰 Retained OpenAI `tool_calls` during flattening and mapped Anthropic tool roles for third-party forwarders.
+- 📐 Aligned Anthropic responses with official schemas (Markdown images, token usage fields).
+
+---
 
 ## [1.6.34] - 2026-08-28
 
 ### Fixed
-- 🧹 **Anthropic 协议细节与健壮性打磨**（v1.6.33 Claude Code 修复的收尾）：
-  - 响应补上 Anthropic 规范的 `stop_sequence` 字段（未命中停止序列时为 `null`），并同步补齐 en / ko / zh-TW 三份 API 文档（此前只有 zh-CN / ja 写了）。
-  - 工具调用块的 `name` 显式为 `null` 时不再渲染出 Python 字面量 `None`。
-  - 客户端断开时的保活守卫补上异常取回，避免极端时序下 asyncio 打印 "Task exception was never retrieved"。
-- 🧪 测试加固：补上工具渲染格式的精确断言、`tool_result` 内容各种退化形态的覆盖、以及 OpenAI buffered 流式断连取消（主路径 + 重试路径）的测试；修正一条恒真的空转断言与一处被不必要放宽的源码守卫。
+- 🧹 Anthropic protocol compliance: Added `stop_sequence` field support and gracefully handled null values in tool calling blocks.
+- 🧪 Added unit test coverage for tool formatting and streaming cancellations.
+
+---
 
 ## [1.6.33] - 2026-08-28
 
 ### Fixed
-- 🔌 **修复 Claude Code 无法接入（issue #10）**，共三处：
-  - `/v1/messages` 的 `system` 现在同时接受**字符串**与 Anthropic 合法的**文本块数组**形态（Claude Code 发的是数组、块上带 `cache_control`），不再返回 422。
-  - 会话中的 `tool_use` / `tool_result` 内容块不再被丢弃：此前工具调用与工具结果都拿不到，导致 agent 工具循环从第二轮起就是空的。
-  - Anthropic 流式改为标准的 `event:` + `data:` 两行制（此前只发 `data:`，按 `event` 字段分发的官方客户端会解析不到事件）。
-- 🌊 Claude 的 buffered 流式路径（带工具/附件时走这条，Claude Code 恒命中）补上 SSE 保活心跳，长响应不再被网关空闲超时掐断；三处保活循环在客户端断开时会取消上游任务并及时归还账号槽位。
-- 🛡️ 消息内容块中 `text` 字段为非字符串（如 `null`）时不再 500，改为优雅跳过（四协议共用路径）。
+- 🔌 **Claude Code Compatibility**:
+  - Supported array-of-blocks format with `cache_control` in `/v1/messages` system prompts.
+  - Retained `tool_use` and `tool_result` content blocks in conversation turns.
+  - Standardized Anthropic SSE events using `event:` and `data:` frames.
+- 🌊 Added SSE keepalive heartbeats to Claude buffered streaming routes.
+
+---
 
 ## [1.6.32] - 2026-08-14
 
 ### Fixed
-- 🧠 **思考内容逐帧流式（修复「答案早于思考」）**：原生 Gemini 是「先生成完整思考、再生成答案」；此前思考只在收尾一次性带出、答案却逐帧流式，导致面板上答案先显示、思考后到。现在思考在生成阶段就作为 `reasoning_content` **逐帧增量流出**（`/v1/chat/completions`），思考先于答案显示、并带打字机效果。收尾仍带完整思考作兜底；不开思考 / 普通对话零回归（responses、native Gemini 等接口不受影响）。
+- 🧠 **Incremental Streaming of Thoughts**: Streams reasoning thoughts frame-by-frame as `reasoning_content` before final text answers on `/v1/chat/completions`.
+
+---
 
 ## [1.6.31] - 2026-08-14
 
 ### Fixed
-- 🌊 **流式连接偶发中断修复**：Gemini 是网页反代，流式响应在等待模型生成整段答案时会有一段无字节的静默期；跨境/网关的空闲超时会在此期间掐断连接（面板表现为「连接中断」误报，与生图无关）。现为全部四条流式接口（`/v1/chat/completions`、`/v1/responses`、`/v1/messages`、native Gemini `streamGenerateContent`）在静默期补发保活心跳（SSE 接口用 `: ping` 注释帧，native Gemini 的 NDJSON 用空行），保持连接不空闲、不再被掐断。心跳是纯附加旁路，不改任何生成/解析逻辑，普通与生图请求零回归。
-- 📝 修正「模型测试」面板误导的网络错误文案（原文案会提「图片可能已在后台生成」，对文本请求属误导），改为中性的「连接中断，请重试」。
+- 🌊 **Streaming Keepalive Heartbeats**: Added periodic keepalive pings (`: ping` and NDJSON blank lines) across all streaming endpoints to prevent gateway timeouts during silent generation phases.
+- 📝 Improved network error diagnostics in the Playground.
+
+---
 
 ## [1.6.30] - 2026-08-14
 
 ### Added
-- 🧠 **模型测试面板「思考」开关**：在「模型测试」页勾选「思考」即可对原生 Gemini 开启扩展思考，模型的思考过程以可折叠的「💭 思考过程」块显示在答案上方。未勾选或无思考内容时与原来完全一致。
+- 🧠 **Playground Thinking Toggle**: Added toggle to enable extended reasoning in Playground sessions.
+
+---
 
 ## [1.6.29] - 2026-08-14
 
 ### Added
-- 🧠 **原生 Gemini 扩展思考**：请求带 `reasoning_effort` 即可让 Gemini（pro/flash/flash-lite）开启扩展思考，并把思考过程作为 `reasoning_content`（Responses 为 reasoning 项）返回。默认开启，可在设置里 `extended_thinking_enabled` 一键关闭；仅在请求思考时启用、失败自动退回普通格式，不影响普通聊天。
+- 🧠 **Extended Thinking (`reasoning_effort`)**: Supported reasoning effort parameters mapped to `reasoning_content` for Gemini models.
 
-### Fixed
-- 修正 `gemini-flash-lite` 免费档内部模型 ID（付费档不变）。
+---
 
 ## [1.6.28] - 2026-07-30
 
 ### Added
-- 🆕 **新增 `gemini-flash-lite` 模型**：暴露 Gemini 最轻量的 Flash-Lite 档（3.5 Flash-Lite），在 Pro/Flash 被限额时仍有可用模型可选。内部按账号真实可用模型动态映射，沿用固定公开名的抽象。
+- 🆕 **`gemini-flash-lite` Model Support**: Added dynamic routing for Gemini 3.5 Flash-Lite models.
+
+---
 
 ## [1.6.27] - 2026-07-25
 
 ### Changed
-- 🎨 **管理面板品牌 Logo 更换**：左上角图标改为自定义品牌 Logo 图片（`static/components/logo.png`），并将其压缩到 128×128（约 16KB，较原图缩小约 97%）以减小体积。
-- 🔖 **新增控制台 Favicon**：管理面板与登录页现在使用该 Logo 作为浏览器标签页图标。
+- 🎨 **Branding Assets**: Optimized console brand logo and browser favicons.
+
+---
 
 ## [1.6.26] - 2026-07-07
 
 ### Added
-- 🔌 **OpenAI Responses API 支持**（`/v1/responses` 或 `/openai/v1/responses`）：让需要新版 Responses 协议的客户端（如 2026 年 2 月起砍掉 Chat Completions 支持的 Codex CLI）能正常接入 gemini2api——支持文本对话、流式输出、工具（函数）调用，Gemini 模型和 API 管理配置的第三方模型均可使用。
-- 流式事件严格遵循官方协议顺序，修正了参考实现已知会漏发的两个关键事件：`response.output_text.done` / `response.function_call_arguments.done`。
+- 🔌 **OpenAI Responses API (`/v1/responses`)**: Supported OpenAI Responses protocol for compatibility with Codex CLI and next-generation agents.
 
-### Notes
-- 不支持服务端多轮状态（`previous_response_id` 会明确返回 400 `invalid_request_error`，而不是悄悄忽略）——因为 Codex CLI 等客户端本身会重发完整对话历史，无需服务端保存状态。
-- `tools` 使用 Responses API 的扁平格式（`{"type":"function","name",...}`），与 Chat Completions 的嵌套格式不同。
+---
 
 ## [1.6.25] - 2026-06-23
 
 ### Added
-- 🎚️ **「API 管理」页 Gemini 兜底开关**：一键开/关「Gemini→第三方兜底」，即时生效并持久化（原来只能改 `.env` 且需重启）。开关**只控制兜底**——无论开关状态，你在 API 管理里配置的第三方模型都照常直连调用、照常出现在 `/v1/models`。
+- 🎚️ **Third-Party Failover Switch**: Added interactive toggle in the API Keys console for enabling or disabling Gemini-to-third-party failovers.
+
+---
 
 ## [1.6.24] - 2026-06-22
 
 ### Added
-- 🧩 **自定义 Gem 支持**：管理面板新增「Gem 管理」页，可列出 / 新建 / 修改 / 删除账号下你自己创建的自定义 Gem；支持把任意 Gem「暴露为模型名」——之后任何 OpenAI 兼容客户端只需使用该模型名即可以该 Gem 的人设进行对话。
-  - Gem 绑定其所属账号，调用时只走绑定账号、不参与多账号轮询，确保人设一致性。
-  - 调用解析：模型名命中 Gem 映射后，请求自动路由至绑定账号并携带对应 Gem 配置发起会话。
-  - 删除 Gem 时自动清理对应的模型名映射，无需手动维护。
+- 🧩 **Custom Gems as Models**: Manage, create, and expose Google Gemini Gems as OpenAI-compatible model names.
+
+---
 
 ## [1.6.23] - 2026-06-22
 
 ### Added
-- 🧠 **第三方「每模型思考(reasoning_effort)」设置**:API 管理里可为每条第三方模型配置思考等级（默认不设 / none / low / medium / high / 自定义），转发时按设置自动注入——OpenAI 兼容上游注入 `reasoning_effort`，Anthropic 上游换算成 `thinking`（budget_tokens）并把响应 thinking 映射回 `reasoning_content`。默认不设时零回归;不支持思考的模型留默认即可。
+- 🧠 **Per-Model Reasoning Effort**: Configurable reasoning levels for third-party models in the API Key manager.
 
-### Fixed
-- `reasoning_content` 纳入"空响应"判定:仅返回思考内容（content 暂空）不再被误判为空而触发切换/兜底。
+---
 
 ## [1.6.22] - 2026-06-22
 
 ### Added
-- 🔁 **第三方直连「同名多家」自动故障切换**：当同一模型 ID 在「API 管理」中配置了多家第三方时，直连调用固定优先用第一家，遇报错 / 限流 / 额度耗尽 / 超时 / 空响应即自动切换下一家同名第三方，全部失败才返回最后错误；客户端只用一个模型名、无感。
-  - 流式请求在「首字节前」即可无缝换家（已开始下发的流不中途切换）；坏家进入内存冷却（`THIRDPARTY_FAILOVER_COOLDOWN`，默认 180 秒，设 0 关闭），冷却期内优先跳过、到期自动恢复；某模型候选全部冷却或仅一家时仍照常尝试，绝不饿死。
-  - 默认生效、无单独开关：仅当配置了同名多家时才有可见行为变化，单家场景零回归。Gemini→第三方兜底链不受影响。新增单元测试覆盖选择/冷却/分发/流式 pre-flight，`.env.example` 同步。
+- 🔁 **Multi-Provider Failover for Identical Models**: Automatic failover across multiple configured providers sharing the same model identifier.
+
+---
 
 ## [1.6.21] - 2026-06-21
 
 ### Added
-- 🔀 **Gemini→第三方自动兜底链**（`FALLBACK_ENABLED`，默认关闭，零回归）：任意 Gemini 模型（flash/pro/thinking）请求报错或返回空响应时，自动改用 API Key 池中已配置的第三方模型原生重试，客户端无感、仍只用一个模型名。
-  - 选择自动且与具体服务商无关：候选取自 API Key 池中你已添加的第三方，按名称跳过明显非聊天的模型（image/video/audio/embedding 等），其余**随机轮询、一个失败（报错/空响应）就换下一个**直到成功。统一以非流式探测候选，从而既不会把报错也不会把空响应误当成功；流式则把验证后的结果转成 SSE（含原生工具调用）。
-  - `FALLBACK_MODELS` 为可选的精确指定（逗号分隔、按序尝试）；留空即自动。新增 `app/core/fallback.py` 与单元测试 `tests/unit/test_fallback.py`，`.env.example` 同步。
+- 🔀 **Gemini-to-Third-Party Failover Chain**: Automatically fallback to configured third-party models when upstream Gemini requests fail.
+
+---
 
 ## [1.6.20] - 2026-06-19
 
 ### Fixed
-- 🐳 **修复 v1.6.19 非 root 镜像导致的升级回归**：v1.6.19 把镜像改为非 root（`USER appuser`）运行，但既有部署 bind 挂载的 `./data` 是旧 root 容器创建的（属主非容器用户），`docker compose pull && docker compose up -d` 后非 root 进程写 `data/cookies` 等触发 `PermissionError: [Errno 13]` → `Application startup failed` 崩溃重启循环。
-  - 改为 **入口脚本（`docker-entrypoint.sh`）以 root 启动 → `chown` 修复 `/app/data`、`/app/api` 卷属主 → `gosu` 降权到非 root 的 `appuser` 运行**。既保持非 root 加固，又让历史部署 `docker compose pull` **无缝升级、无需手动 chown**。
-  - `appuser` uid 改为 **1000**（与常见宿主用户、refresher 的 `pwuser` 对齐），共享 `./data` 属主一致，且升级后文件仍归宿主用户、便于免 sudo 查看。
-  - `docker-compose.yml` 移除 v1.6.19 引入的 `user:` 行（属主与降权改由入口脚本处理），镜像新增 `gosu` 依赖。
+- 🐳 **Non-Root Docker Permissions**: Re-engineered `docker-entrypoint.sh` to initialize with root, fix `/app/data` volume permissions, and drop privileges to `appuser` (UID 1000) using `gosu`.
+
+---
 
 ## [1.6.19] - 2026-06-19
 
 ### Security
-- 🔒 **管理面板存储/反射型 XSS 全面加固**：日志面板（`r.path`/`model`，中间件在鉴权前记录，未认证即可注入）、账号面板（`account.label` 注入 `onclick` 单引号字符串）、API Key 表、模型映射编辑器、Playground 图片 URL、远程二维码配置——所有动态字段统一 HTML 转义；内联 `onclick` 改 `data-*` + `addEventListener`（单引号无法靠 escapeHtml 兜住），属性值用专门的 `escapeAttr`。
-- 🔒 **SSRF 修复**：远程附件下载改为禁跟随重定向并对每一跳 `Location` 重新校验（堵住经 3xx 跳转到 `169.254.169.254`/内网的绕过），并提前按 Content-Length 限制大小；统一转发引擎对存储的 `base_url` 增加出站 SSRF 校验，报错不再回显内网 IP。
-- 🔒 **设置写坏 `.env` 的永久 DoS**：`POST /admin/settings` 改为先做取值域校验（拒绝非法 `rotation_strategy`、拒绝把 bool 当 int）、再更新内存、最后写盘，失败回滚，杜绝畸形值落盘导致重启崩溃。
-- 🔒 **路径穿越**：客户端可控的 `conversation_id` 作文件名时做安全字符校验/哈希，无法逃逸数据目录读写删。
-- 🔒 CORS 通配 + 凭据时启动告警；限流可选信任代理头取真实客户端 IP（默认行为不变）。
+- 🔒 **Admin Console XSS Hardening**: Escaped all dynamic fields, converted inline event handlers to `data-*` listeners, and utilized `escapeAttr`.
+- 🔒 **SSRF Protection**: Blocked private, loopback, and cloud metadata addresses in attachment downloads and third-party Base URLs.
+- 🔒 **Input Validation**: Strict validation for runtime settings and path traversal protection for conversation files.
 
-### Fixed
-- 🌊 **真流式生图占位 URL 泄漏 + 不可兑现的 `_replace`**：改为纯追加式（回收不稳定尾段、在 final 事件对账），三家接口一致，纯文本回复字节级零回归。
-- 🌊 OpenAI buffered keepalive 异常穿透生成器（绕过重试/错误映射）、Gemini 流式末帧改 Google camelCase 字段。
-- 🔀 统一转发：OpenAI 流式 SSE 缺空行分隔符、Anthropic→OpenAI 转换缺终止 `data: [DONE]`、`base_url=None` 崩溃 → 干净 400。
-- 📊 `USAGE_STATS_ENABLED=false`（或运行时关）时 usage-stats 端点不再 500；`hours` 非法参数返回 422；legacy 快照共享 dict 引用导致历史损坏、漏算当前未落盘区间已修。
-- 👥 账号池：`accounts.json` 原子写 + 加载坏文件/坏条目容错（不再崩启动）、`add_account` 删除后 ID 冲突、round-robin 公平性。
-- 🍪 Cookie 解析：删除/空值不再覆盖有效鉴权 Cookie，记录并清理 Max-Age/Expires。
-- 🛡 指纹：配置原子写 + 坏文件容错、版本同步会话泄漏修复；`reload-cookies` 空池时返回 503 而非 500；深度研究子问题编号剥离不再误删数字开头正文。
-- 🔑 无 `.env` 文件时自动生成的 API Key 现会落盘，不再每次重启更换。
-- 🧰 `atomic_io` 写后 fsync 父目录提升崩溃持久性。
-
-### Changed
-- ⚙️ 让此前"声明了但未生效"的配置真正生效：`MODEL_WHITELIST`（过滤 /models）、`JITTER_ENABLED`、`VERSION_SYNC_INTERVAL`、`FINGERPRINT_CONFIG_PATH`。
-- 🐳 主镜像与 refresher 镜像改非 root 运行 + 内置 HEALTHCHECK；`docker-publish` 确保 `api/` 热更新资源进镜像；refresher 接入 compose（`--profile refresher`）并修复鉴权（支持 `ADMIN_API_KEY`）/状态回注/间隔单位/空 PSIDTS。
-- 🚦 CI 的 ruff + pytest 改为阻塞式门禁（不再 `continue-on-error`）。
-- 🖼 生图代下载移出事件循环（`asyncio.to_thread`）。
-
-### Docs
-- 📄 README/zh-CN/.env.example 全面与 `app/config.py` 对齐：`MAX_CONCURRENT_PER_ACCOUNT` 3→8、补全约 16 个 env、补 7 个未文档化 `/admin` 端点、修复坏 curl 示例、修复 CHANGELOG `[0.4.0]` 损坏标题与多处 2025→2026 年份、Chrome 131/2h→124/24h 更正。
-- 🧪 新增 `tests/unit/test_env_example_sync.py` 漂移测试，防止配置与 `.env.example` 再次脱节。
+---
 
 ## [1.6.18] - 2026-06-19
 
 ### Fixed
-- 🔧 **gemini-pro 生图仍报 network error**：v1.6.17 的 SSE 心跳已解决 flash 路径，但 `gemini-pro` 生图常需 **>60s**，Google POST 仍用 60s 默认超时导致服务端断连。修复：生图意图 POST 超时延长至 **180s**（普通对话仍 60s）；SSE keepalive 间隔 15s→**10s**；内容切片阶段也发 ping；生图结果切片 **delay=0** 更快收尾。
+- 🔧 Extended timeout for image generation requests to 180s and reduced SSE keepalive intervals.
+
+---
 
 ## [1.6.17] - 2026-06-19
 
 ### Fixed
-- 🔧 **生图 playground 返回 `network error`**：生图意图走 buffered 伪流式时，`await generate()`（含图片代下载）整段阻塞期间零 SSE 字节，经 Cloudflare/nginx 前置代理触发首字节/读超时（520）→ 浏览器报 network error，而 Gemini 网页端图实际已生成。修复：立即发首帧 SSE + 阻塞期间周期 `: ping` 心跳保活；图片代下载默认 `=s2048`（替代 `=s0` 全分辨率）、单次超时收敛至 25s、失败降级 `=s512` 重试并回退占位提示（不静默丢图）。
+- 🔧 Streamlined image generation streaming with immediate SSE headers and periodic keepalives.
 
-### Added
-- 🎨 **Playground 生图等待态 UX**：生图 1–2 分钟期间显示等待气泡与脉冲动画；识别 SSE 心跳刷新「仍在处理中」；network/520/502 友好 i18n 提示（5 语种）。
+---
 
 ## [1.6.16] - 2026-06-19
 
 ### Fixed
-- 🔧 **深度研究同步接口必崩**：`/gemini/v1beta/deepresearch` 因参数名笔误（`max_s`→`max_sources`）每次返回 500，已修复。
-- 🔧 **第三方流式转发失效**：OpenAI/Anthropic 兼容转发因 HTTP client 在返回响应前被提前关闭，导致流式迭代时连接已断；改为由流生成器内部持有连接生命周期，流式转发恢复正常（非流式路径不变）。
-- 🔧 **Anthropic 非流式转发崩溃**：`created` 字段解析消息 id 触发 `ValueError` 致 500，改用响应生成时间戳。
-- 🔧 **账号槽位泄漏导致死锁**：客户端断连/流中断时槽位未归还，长期累积后全池报"无可用账号"；用 `try/finally` 兜底确保任何路径都释放槽位。
-- 🔧 **多账号模型解析串扰**：模块级全局模型映射被多账号互相覆盖，改为按账号实例隔离。
-- 🔧 **"Client not ready" 间歇报错**：账号 Cookie 失效时不再硬失败——选号时跳过不健康账号、将"未就绪/401/403"纳入 failover 自动换号、单账号在抛错前单飞自愈重载 Cookie。
-- 🔧 **限流配置从未生效**：已创建 Limiter 但未挂载中间件/未对端点限流；补挂 `SlowAPIMiddleware` 并对对话端点限流（默认 `RATE_LIMIT_ENABLED=false` 旁路，零回归）。
+- 🔧 Resolved parameter naming error in Deep Research endpoint.
+- 🔧 Fixed connection lifecycle handling in third-party streaming forwarders.
+- 🔒 Added optional `ADMIN_API_KEY` for dedicated admin authentication.
+- 🔒 Masked credentials and API keys in logs and exports.
 
-### Security
-- 🔒 **管理权限分离**：新增可选 `ADMIN_API_KEY`，`/admin/*` 走独立鉴权（留空则回退 `API_KEY`，单 key 仍可管全部，零回归）。
-- 🔒 **API Key 不再明文写入启动日志**（改掩码 `sk-****`）。
-- 🔒 **SSRF 防护**：API Key 探测的 `base_url` 与多模态附件远程 URL 在请求前校验，拦截内网/环回/链路本地/云元数据地址，且不回显内网响应。
-- 🔒 **凭据脱敏**：第三方密钥导出默认脱敏（需 `?reveal=true` 取明文）、管理接口的 Google PSID 凭据响应改掩码（字段保留）。
-- 🔒 **凭据/Cookie 文件原子写**（临时文件 + 原子替换），加载时坏记录容错跳过，不再因单条损坏清空整库。
-- 🔒 **API Key 恒定时间比较**（`secrets.compare_digest`，防时序侧信道）。
-- 🔒 **CORS 可配置**：新增 `CORS_ALLOW_ORIGINS` / `CORS_ALLOW_CREDENTIALS`（默认与原行为完全一致，可按需收紧）。
-- 🔒 **前端确认弹窗 XSS 加固**：`showConfirm` 文案统一转义后再注入。
-
-### Added
-- 🧪 **自动化测试与 CI 门禁**：引入 pytest 单元/冒烟测试与 GitHub Actions CI（ruff + pytest），并补齐 `.gitignore`/`.dockerignore` 防止凭据误入构建上下文/仓库。
-- ♿ **管理面板无障碍与多语言增强**：全局 `:focus-visible` 焦点环、修正暗色按钮/三级文本对比度、弹窗 `role=dialog`+焦点陷阱+Esc、表单 `label` 关联、登录页/状态徽章/日期数字多语言。
+---
 
 ## [1.6.15] - 2026-06-06
 
 ### Added
-- 🧹 **自动清理 Gemini 网页端堆积会话**：API 每次对话都会在 Gemini 网页端（gemini.google.com）留下一条会话记录，长期调用会堆积大量历史。现在新增自动清理：
-  - 后台定时（默认每 6 小时）删除超过保留窗口（默认 24 小时）的旧网页会话，**置顶会话永不删除**
-  - 循环清理直到删空，解决重度账号堆积数百会话单轮清不完的问题
-  - 保留窗口（24h）远大于反代上下文窗口（6h），**正在续接的多轮对话绝不会被误删**；反代多轮上下文用本地存储维护，与网页端会话记录无关
-  - 设置面板新增「网页会话清理」分组（开关 / 保留时长 / 清理间隔 / 是否跳过置顶），5 语种本地化
-  - 新增管理端点 `GET /admin/web-chats`（列出网页会话）、`POST /admin/cleanup-web-chats`（手动触发清理，后台异步执行立即返回）
-  - 清理参数有下界保护（保留时长至少 1 小时），避免误传 0 清空所有会话
+- 🧹 **Automated Gemini Web Chat Cleanup**: Background loop cleans up old web conversations (skipping pinned chats) to prevent account clutter.
+
+---
 
 ## [1.6.14] - 2026-06-02
 
 ### Fixed
-- 🖼️ **生图意图识别补充意愿动词**：之前"我想要一张…的图""要一张图""我需要一张海报"等用「想要/要/需要」表达的生图请求没被识别，导致走真流式、图片跑到文字后面（还可能出现 `http` 残片）。现在补充了意愿动词（想要/要/想/需要/求/want/need），这类请求正确走生图、图片排在前面。仍要求「图像名词+动词」同时出现，"我想吃饭""要去开会"等不会误判。
+- 🖼️ Enhanced image intent recognition for desire verbs (`want`, `need`).
+
+---
 
 ## [1.6.13] - 2026-06-02
 
 ### Changed
-- 🖼️ **生图回复改为「图片在前」+ 紧凑排版**：生图成功时图片排在最前面，紧跟文字描述（单换行，去掉之前的多余空行），不再是"一大段文字+空行+图片"。三家接口（OpenAI/Claude/Gemini）一致：OpenAI/Gemini 图片 markdown 在前、Claude image block 在文字 block 前。
-- 🎯 **生图意图识别大幅增强**：扩充关键词（画/生成/设计/做/来张…图、海报/插画/logo/照片、poster/image/draw 等），并新增宽松兜底判断（图像名词+产出动词组合），让"设计一张海报""来张柴犬图""帮我弄个logo"等口语化生图请求也能正确走生图路径、图片排在前面，避免漏识别导致图片跑到文字后面。
+- 🖼️ Formatted image generation responses with images placed at the top followed by descriptions.
 
-### Fixed
-- 🧹 **过滤更多 googleusercontent 占位 URL**：除 `image_generation_content` 外，新增过滤 `image_retrieval`/`image_collection`（Gemini 走"图片检索"而非"生成"时返回的占位 URL，客户端无法访问）。过滤后若无有效图片，返回友好提示引导用明确生图指令，而不是返回空内容或无效网址。
+---
 
 ## [1.6.12] - 2026-06-02
 
 ### Fixed
-- 🛠️ **修复 agent（如 Hermes）带 tools 时生图被压制、工具调用畸形**：agent 客户端每个请求都带 tools 参数，导致两个问题——
-  - **生图被压制**：带 tools 时工具模拟提示词会劫持 Gemini，让它"以为自己只是文本AI画不了图"。现在**检测到明确生图意图时自动跳过工具模拟、直接生图**（即使带 tools），Hermes 里说"画图"能正常出图。
-  - **工具调用畸形 JSON 透传**：Gemini Web 非原生 function-calling 模型（已确认网页版逆向端点不支持原生工具调用，提示词模拟是唯一路径），模拟工具调用时常输出畸形 JSON（对象当数组、缺引号、被 markdown 包裹、夹带解释文字），之前直接当文本透传给客户端。现在**多层容错解析**：剥离 markdown 代码块、提取 JSON 子串、容忍单对象/缺 status/OpenAI 风格嵌套；无法挽救的畸形工具 JSON 不再透传垃圾，降级为干净提示。
-- 🔧 **修复 Gemini 原生接口（/v1beta）工具调用返回文本而非 `functionCall`**：之前 Gemini 格式接口的工具调用把工具 JSON 当文本塞回 parts，现在正确转成原生 `functionCall` part（`{name, args}`）。
+- 🛠️ Fixed tool call interference during image generation in coding agents.
+- 🔧 Proper part formatting for native Gemini `/v1beta` function calls.
 
-### Changed
-- 改进工具调用提示词：更严格的 JSON 格式约束 + few-shot 示例 + 允许 ```json 代码块包裹，降低模型写畸形的概率。
-- 生图意图检测收窄关键词（必须是明确的画图/生成图片表达），避免"生成报告""create a plan"等被误判为生图。
+---
 
 ## [1.6.11] - 2026-06-02
 
 ### Added
-- 🔁 **503 智能 failover（多账号容灾）**：Google 对数据中心 IP 会间歇性返回 503 "Sorry" 限流（账号×IP 级，会自愈但无法根除）。现在遇到 5xx/503 时：
-  - 单账号只快速重试 1 次（短退避 0.5s，应对瞬时抖动），不再 `2^n` 长退避空耗 7 秒
-  - 多账号时**自动切换到下一个可用账号重试**（failover），一个被限流立刻换下一个，可用性大幅提升
-  - 被限流的账号进入 30 秒**冷却**（期间不优先选），但**不标记为 expired**（它没坏，只是被限流），冷却结束自动恢复优先级
-  - 流式请求在「首字推送前」遇 503 也会 failover；已开始吐字后出错则终止（避免重复内容）
-  - 所有账号都被限流时快速抛出 503（不死循环空转）
-- `/admin/status` 每个账号新增 `cooling_down` 字段，便于观察哪个账号正被限流冷却
+- 🔁 **Smart 503 Failover**: Instant failover to alternative accounts in the pool upon receiving Google Web 503 rate limits.
 
-### Changed
-- 新增配置项 `same_account_5xx_retries`（默认 1）、`failover_cooldown`（默认 30 秒）
+---
 
 ## [1.6.10] - 2026-06-01
 
 ### Added
-- ⚡ **真流式输出**：三家接口（OpenAI/Claude/Gemini）的流式响应改为**真正的增量流式**。之前是「伪流式」——先等 Gemini 整段生成完，再把完整文本切词假装逐字吐出，客户端/agent 感知不到提速。现在直接读 Gemini 的 `StreamGenerate` 增量响应，**首字一生成就开始推送**，token 实时到达，聊天打字机体感大幅改善
-  - 纯文本对话走真流式；带工具调用（tool_calls）或附件上传的请求仍走完整收集路径（保证功能正确，零回归）
-  - 流式请求用独立连接隔离，规避 curl_cffi 并发流的已知问题，多路并发流式互不串扰
+- ⚡ **True Incremental Streaming**: Incremental streaming directly from Google's `StreamGenerate` RPC for real-time typing feel.
+- 🚀 Increased account concurrency and added request queuing.
 
-### Changed
-- 🚀 **并发能力大幅提升**：单账号最大并发从 `3` 提升到 `8`（面板「设置」可继续调整）。更关键的是，**并发满载时不再直接报错** `No available accounts`——改为**排队等待**可用槽位（默认最多等 60 秒），等不到才报错。这样 agent 类客户端（会并发发起多个请求）不再一并发就失败，可以稳定干活
-- 📝 文档：建议 agent 重负载场景优先使用 `gemini-flash`（响应约 4-5 秒），比 `gemini-pro`（约 9-17 秒）更快
+---
 
 ## [1.6.9] - 2026-06-01
 
 ### Fixed
-- 🖼️ 生成图片现在返回**全分辨率原图**：之前下载的是压缩缩略图（如 512px），分辨率和大小都不对。现在下载时给图片 URL 加 `=s0` 后缀，拿到原始全分辨率图（如 1408×768）
+- 🖼️ Downloads generated images at full resolution (`=s0`).
+
+---
 
 ## [1.6.8] - 2026-06-01
 
 ### Fixed
-- 🖼️ 生图时不再返回 `googleusercontent.com/image_generation_content/...` 占位网址：该占位 URL 没有实际意义（真图在图片数据里），现已从回复文本中过滤，生图只返回图片本身，不留网址也不留空文本
+- 🖼️ Filtered raw placeholder URLs from generated image responses.
+
+---
 
 ## [1.6.7] - 2026-06-01
 
 ### Fixed
-- 🖼️ 控制面板模型测试：生成的图片现在直接渲染为图片显示，不再显示成 markdown 文本/URL（之前用 textContent 纯文本展示，markdown 图链接显示成了原始文字）
-- 面板回复中的图片（markdown `![](url)` / data URI / `/images/` 链接）统一解析渲染为 `<img>`
+- 🖼️ Rendered images directly inside the Playground chat console.
+
+---
 
 ## [1.6.6] - 2026-05-31
 
 ### Added
-- 🖼️ 生成图片本地托管：对话接口的生图结果改为返回可访问的本地 URL（`/images/{id}`），CLI/agent 客户端（OpenClaw、Hermes 等）也能正常渲染显示，不再是无法显示的 base64
-  - OpenAI chat：markdown `![](http://host/images/xxx.png)`
-  - Claude messages：image block 用 `source.type=url`
-  - Gemini generateContent：inlineData 保留 + 文本附图片 URL
-  - `/v1/images/generations` 接口仍返回 b64_json（OpenAI 标准）
-- 图片存 `data/generated_images/`（bind-mount 持久），后台每 6 小时清理超过 7 天的旧图
+- 🖼️ Local image hosting: Generated images served via `/images/{id}` with scheduled cleanup.
+
+---
 
 ## [1.6.5] - 2026-05-31
 
 ### Added
-- 🎨 AI 生成图片支持（基于 Gemini Web 的 Nano Banana / Imagen）：
-  - 新增 OpenAI 兼容图片接口 `POST /v1/images/generations`（+ `/openai/v1/...`），返回 b64_json
-  - 三家对话接口检测到生成图片时自动嵌入回复：OpenAI（markdown data URI）、Claude（image block）、Gemini（inlineData part）
-  - 靠 prompt 触发生图（不含生图意图时自动加 "Generate an image of" 前缀）
-  - 服务端带 cookie 代下载图片（lh3 多级 302 重定向，客户端直接访问会 403），转 base64 返回
+- 🎨 Image generation support via `POST /v1/images/generations` and multimodal conversation endpoints.
+
+---
 
 ## [1.6.4] - 2026-05-31
 
 ### Added
-- 三家接口全部暴露标准裸路径，主流 SDK 开箱即用、无需改 base_url 后缀：
-  - OpenAI：`/v1/chat/completions`、`/v1/models`
-  - Claude：`/v1/messages`、`/v1/messages/count_tokens`
-  - Gemini：`/v1beta/models/{m}:generateContent`、`/v1beta/models/{m}:streamGenerateContent`、`/v1beta/models`
-- 原有带前缀路径（`/openai/v1`、`/claude/v1`、`/gemini/v1beta`）全部保留，向后兼容
+- Standard un-prefixed endpoints (`/v1/chat/completions`, `/v1/messages`, `/v1beta/models`).
 
-### Fixed
-- 修复部署机制：`docker-compose.yml` 由 `build: .` 改为 `image: ghcr.io/xwteam/gemini2api:latest`，`docker compose pull` 真正生效（此前因 build 优先，pull 被忽略，生产长期跑本地旧镜像导致面板版本号卡住）
-
-### Notes
-- 裸 `/v1/models` 归 OpenAI 格式独占（同一路径无法同时返回两种格式）；Claude 模型列表仍可通过 `/claude/v1/models` 获取
+---
 
 ## [1.6.3] - 2026-05-31
 
 ### Added
-- 图片/文件上传支持：OpenAI（image_url）、Claude（image.source）、Gemini（inline_data）三格式多模态
-- 上传模块 `app/core/file_upload.py`：content-push.googleapis.com，支持 base64 data URI 和远程 URL
-- Playground 图片上传 UI：添加图片按钮、缩略图预览、删除、聊天显示
-- 对外固定稳定模型名 `gemini-pro` / `gemini-flash` / `gemini-flash-thinking`（API 稳定契约，永不变）
-- 模型改用网页版 `otAQ7b`(GetUserStatus) RPC 拉取账号真实可用模型，内部按账号订阅等级动态映射
+- Multimodal image and file uploads via base64 and remote URLs.
+- Dynamic model discovery using Google Web RPCs.
 
-### Fixed
-- 重启不再丢 Cookie：initialize 优先加载磁盘持久化的有效 Cookie，不被 .env 旧值覆盖
-- 模型不再用正则从 HTML 乱抓（消除 gemini-2.5-flash-image 等不可用脏数据）
-- 深色主题取消按钮文字白色（补 `.btn-secondary` 样式）
-- 修复 gemini.py 既有 bug：generate 调用签名、system_instruction 类型、build_tool_prompt 用法、split_into_chunks async
+---
 
 ## [1.6.2] - 2026-05-19
 
 ### Added
-- 会话过期机制：页面 5 分钟无操作自动登出，保护面板安全
+- Inactivity session timeout for the web console.
+
+---
 
 ## [1.6.1] - 2026-05-18
 
 ### Added
-- 新增 failover（故障转移）策略：一个账号持续使用直到失败才自动切换下一个
-- 模型选择通过 `x-goog-ext-525001261-jspb` header 实现真正切换，支持 gemini-3 全系列
-- 旧版模型名别名兼容（gemini-2.5-pro → gemini-3-pro-plus 等）
-- 新增思考模式：`gemini-2.5-flash-thinking`、`gemini-2.0-flash-thinking`
-- 对话上下文持久化（混合模式）：优先 Gemini 原生 conversation_id 多轮续接，本地 `data/conversations/` 备份历史
-- 请求参数新增 `conversation_id` 字段，响应返回 `conversation_id` 供下次续接
-- 容器时区设置为 Asia/Shanghai，日志显示北京时间
-- Gemini 会话过期时自动 fallback 到完整 prompt 拼接模式，对客户端透明
-- 多语言切换系统（简体中文/繁體中文/English/日本語/한국어），语言偏好 localStorage 持久化
-- 语言切换器组件（右上角下拉菜单），MutationObserver 自动翻译动态元素
-- 全部页面组件 data-i18n 国际化标记（仪表盘/账号管理/日志/模型测试/使用统计/API管理/设置）
-- 自定义确认弹窗（showConfirm），替换浏览器原生 confirm()，支持 warning/danger/info 三种类型
-- 服务重启按钮（右上角控制栏），`POST /admin/restart` 端点，重启后自动轮询恢复并刷新页面
-- 模型测试 textarea 添加快捷键提示（Enter 发送，Shift+Enter 换行）
+- Multi-account failover load balancing strategy.
+- Multi-language localization system with dynamic UI translation.
+- Third-party model API Key management and aggregation into `/openai/v1/models`.
 
-### Fixed
-- 移除无意义的 least-used 策略（Gemini Web 无法获取真实用量）
-- 模型列表统一为用户友好名称（gemini-2.5-xxx），不再暴露内部 gemini-3 名称
-- 响应中 model 字段返回用户请求的原始模型名
-- Playground 模型下拉框从统一别名列表加载，不再使用页面缓存的旧模型名
-- Playground 对话支持上下文（累积消息历史），点击"新对话"清空
-- 修复 MutationObserver 无限循环导致页面卡死（textContent 变更触发 addedNodes 回调）
-- 设置页面：可视化管理运行时配置（刷新间隔、重试次数、速率限制、健康检查等）
-- `GET/POST /admin/settings` API，支持分组查看和批量更新配置
-- API Key 管理系统：集中管理第三方大模型 API Key（OpenAI、Anthropic、Gemini、OpenRouter、自定义）
-- `GET/POST/DELETE /admin/api-keys` 完整 CRUD API，支持批量导入导出
-- Provider 目录（`/admin/api-keys/catalog`），内置主流模型列表
-- 统一转发引擎（`api_forwarder`）：请求模型不在 Gemini Web 时自动转发到对应 Provider
-- OpenAI 兼容格式转发（支持流式），Anthropic 格式双向转换
-- `/openai/v1/models` 自动聚合 Gemini Web 模型和 API Key 池中的模型
-- 前端设置面板：分组表单、控件、保存/重置
-- 前端 API 管理面板：添加/删除/启禁用 Key、批量操作、导入导出
-
-### Changed
-- 用量统计图表自适应容器宽度，高度增至 320px，撑满面板
-- 用量统计增加更多时间范围选项（3d/30d/全部），粒度与时间范围智能联动
-- 模型分布：无请求数据时从账号池获取模型列表作为占位显示
-- 模型发现 regex 改进：只匹配含版本号的完整模型名，过滤无效短名
-- 新增 `MODEL_WHITELIST` 配置项，支持逗号分隔的模型白名单过滤
-- 用量统计面板全面中文化（图例、空状态、加载提示）
-- 柱状图颜色从蓝色改为项目主题绿色（#059669）
-- 日志面板 UI 优化：选中行样式改为绿色调，与侧边栏风格统一
-- 日志面板全面汉化：标题、筛选按钮、表头、搜索框、分页、详情面板
-- 方向徽章中文化：ingress → 入站，egress → 出站
-- 修复 CSS 语法错误（white-space、badge text-transform 截断）
+---
 
 ## [0.7.0] - 2026-05-16
 
 ### Added
-- 结构化实时日志系统，替代旧的纯文本 SSE 流
-- LogStore 环形缓冲区（2000 条），支持分页、方向过滤、文本搜索
-- HTTP 请求捕获中间件，自动记录方法、路径、状态码、延迟、模型
-- `GET /admin/logs` 分页查询接口，支持 direction/search 参数
-- `GET /admin/logs/state` 和 `POST /admin/logs/state` 日志状态管理
-- `POST /admin/logs/clear` 清空日志
-- `GET /admin/logs/{id}` 单条记录详情
-- 前端表格式日志面板：方向徽章、状态码着色、延迟显示、JSON 详情面板
-- 前端 REST 轮询（1.5s 间隔）+ 暂停/恢复控制
+- Structured in-memory LogStore ring buffer (2000 items) with pagination, search, and direction filtering.
 
-### Removed
-- 移除旧的 BufferLogHandler 和 `/admin/logs/stream` SSE 端点
-- 移除前端 EventSource 日志流
+---
 
 ## [0.6.0] - 2026-05-16
 
 ### Added
-- 用量统计系统，持久化时序快照，重启不丢失历史数据
-- `GET /admin/usage-stats/summary` 接口，返回累计请求数、错误率、平均延迟、轮换成功率
-- `GET /admin/usage-stats/history` 接口，支持 raw/five_min/hourly/daily 粒度和自定义时间范围
-- LiveMetricsCollector 单例，线程安全记录每次请求的模型、延迟和 Cookie 轮换事件
-- 后台快照循环（默认 5 分钟），自动采集并持久化到 `data/usage-stats.json`
-- 基线机制（baseline），账号池重置时吸收差值，保证历史数据单调递增
-- 前端"使用统计"面板：Summary 卡片 + SVG 图表（请求柱状 + 延迟折线）+ 模型分布表格
-- 粒度/时间范围选择器，支持 5 分钟/小时/天 粒度和 1h/6h/24h/7d 范围
+- Persistent usage statistics, time-series snapshots, and interactive SVG charts.
 
-### Changed
-- `account_pool.generate()` 自动记录每次请求的模型和响应延迟
-- `gemini_client._rotate_cookies()` 自动记录轮换成功/失败事件
-- 配置新增 `USAGE_STATS_ENABLED`、`USAGE_STATS_INTERVAL`、`USAGE_STATS_RETENTION_DAYS`
+---
 
 ## [0.5.2] - 2026-05-16
 
 ### Added
-- batchexecute 心跳 RPC（`otAQ7b`），初始化和每次 auto-refresh 后自动发送，模拟浏览器活跃行为
-- Cookie jar 增加 Set-Cookie 响应头解析，补充捕获 `response.cookies` 可能遗漏的 Cookie
-- `cookie_names()` 调试方法，返回当前所有持久化 Cookie 名称
+- Batchexecute heartbeat RPC (`otAQ7b`) and enhanced cookie jar response header parsing.
 
-### Changed
-- `update_from_response` 双通道捕获：先从 `response.cookies`，再从 `Set-Cookie` 头补充
-- RotateCookies 现在自动携带完整 Cookie jar（SID/HSID/APISID/SAPISID 等）
+---
 
 ## [0.5.1] - 2026-05-16
 
 ### Fixed
-- 修复 curl_cffi AsyncSession 跨域 Cookie 累积导致 "Multiple cookies exist" 错误
-- 每次 HTTP 请求前清除 session 内部 cookie jar，防止跨域名（google.com / gemini.google.com / accounts.google.com）Cookie 冲突
-- 修复 `_obtain_session_token` 导航流程中 Cookie 在多个 Google 域名间累积的问题
-- 修复 Cookie 热更新（reload）时仍可能触发域名冲突的问题
-- 修复 Web 面板点击模型名称复制失败的问题（HTTP 环境下 navigator.clipboard 不可用）
-- 修复 Playground 模型测试下拉列表硬编码、与实际可用模型不一致的问题
+- Handled cross-domain cookie accumulation and clipboard fallback in non-HTTPS environments.
 
-### Changed
-- 新增 `_clear_session_cookies()` 方法，统一管理 curl_cffi 内部 cookie 清理
-- `_obtain_session_token` 每步导航前刷新 cookies 变量，确保使用 PersistentCookieJar 的最新状态
-- 验证 chrome124 为当前 curl_cffi 0.7.4 最高可用 impersonate 目标（chrome126+ 请求失败）
-- `copyToClipboard` 增加 `document.execCommand` 降级方案，兼容非 HTTPS 环境
-- Playground 模型列表改为从 API 动态加载
+---
 
 ## [0.5.0] - 2026-05-15
 
 ### Added
-- 反检测与协议伪装系统，大幅延长 session 存活时间
-- 指纹配置管理（`data/fingerprint.json`），Chrome 版本/UA/TLS 指纹三者自动保持一致
-- 动态请求头构建器，按 Chrome 真实顺序排列，根据请求类型（GET/POST）动态调整 Sec-Fetch-* 值
-- 完整 Cookie 持久化（`data/cookies/`），自动捕获所有响应 Cookie 并持久化到磁盘
-- Chrome 版本自动同步，每 24 小时轮询 Google 版本 API，检测到新版本自动更新指纹
-- 请求时间抖动，模拟人类操作间隔（导航 200-800ms / API 50-300ms / Cookie 轮换 1-3s）
-- 版本降级策略：当 curl_cffi 不支持最新 Chrome 版本时，自动使用最近的可用版本
+- Anti-detection and browser fingerprinting system (Chrome TLS fingerprinting, dynamic headers, request timing jitter).
 
-### Changed
-- GeminiWebClient 全面集成指纹系统，替换硬编码请求头和手动 Cookie 管理
-- TLS 指纹从固定 Chrome 120 升级为动态版本（当前 Chrome 124，curl_cffi 0.7.4 最高可用），支持自动跟进
-- 健康检查和 Cookie 刷新间隔加入随机因子（±20%），避免固定周期特征
-- Docker 新增 `data` 卷挂载，指纹配置和 Cookie 跨容器重建持久化。
+---
 
 ## [0.4.0] - 2026-05-15
 
 ### Changed
-- 替换 httpx 为 curl_cffi，使用 Chrome TLS 指纹伪装，降低被 Google 识别为脚本流量的风险
-- Cookie 轮换逻辑适配 curl_cffi 的 cookies 解析方式
+- Switched HTTP transport from httpx to `curl_cffi` for realistic TLS fingerprint emulation.
 
-### Removed
-- 移除 httpx 依赖
+---
 
 ## [0.3.0] - 2026-05-15
 
 ### Added
-- 多账号轮询（负载均衡）功能，支持 round-robin 和 least-used 两种策略
-- 账号池管理 API（`GET/POST/DELETE /admin/accounts`）
-- 单账号状态检测接口（`GET /admin/accounts/{id}/check`）
-- 每账号独立并发控制（`MAX_CONCURRENT_PER_ACCOUNT`）
-- `accounts.json` 多账号配置文件支持
-- 连续失败自动标记不健康，请求自动跳过故障账号
+- Multi-account load balancing and health check management.
 
-### Changed
-- 架构重构：从单客户端模式升级为账号池模式
-- 所有路由通过 AccountPool 分发请求，支持多账号透明切换
-- 向后兼容：无 `accounts.json` 时自动使用环境变量单账号模式
+---
 
 ## [0.2.0] - 2026-05-15
 
 ### Added
-- 账号状态定时检测功能，支持自定义检测间隔
-- 健康检查历史记录 API（`GET /admin/health-history`）
-- Cookie 热更新接口（`POST /admin/reload-cookies`），无需重启即可刷新凭证
-- 账号状态实时检测接口（`GET /admin/check-account`）
-- 连续失败自动标记不健康机制
+- Scheduled account health checks and hot cookie reloading.
 
-### Changed
-- 许可协议变更为 PolyForm Noncommercial 1.0.0
+---
 
 ## [0.1.0] - 2026-05-14
 
 ### Added
-- Deep Research 深度研究功能
-- OpenAI / Claude / Gemini 三格式函数调用支持
-- SSE 流式输出（OpenAI / Claude）+ Chunked JSON（Gemini）
-- API Key 自动生成与认证（`sk-` 前缀）
-- Cookie 后台自动刷新，无感续期
-- Docker 一键部署
-- 速率限制（可选）
-- 完整的管理接口（`/admin`）
+- Function calling across OpenAI, Claude, and Gemini formats.
+- SSE streaming and initial admin console.
+
+---
 
 ## [0.0.1] - 2026-05-13
 
 ### Added
-- 项目初始化
-- 基础 Gemini Web 反向代理功能
-- FastAPI + httpx 异步架构搭建
-- Pydantic 配置管理与数据模型
+- Initial release of the Gemini Web reverse proxy.

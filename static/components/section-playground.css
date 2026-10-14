@@ -1,4 +1,4 @@
-/* 模型测试 Section */
+/* Model Playground Section */
 .playground-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -218,7 +218,7 @@
     background: var(--primary-color);
 }
 
-/* 图片上传 */
+/* Image Upload */
 .pg-image-preview {
     display: flex;
     flex-wrap: wrap;
@@ -259,7 +259,7 @@
     border-radius: var(--radius-md, 6px);
 }
 
-/* 生图等待态 */
+/* Image Generation Waiting State */
 .chat-message.pg-generating .chat-bubble {
     display: flex;
     flex-direction: column;

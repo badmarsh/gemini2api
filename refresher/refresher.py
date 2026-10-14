@@ -1,9 +1,9 @@
 """
-Gemini Cookie Refresher - Playwright 自动续期
+Gemini Cookie Refresher - Playwright automated renewal
 
-通过真实 Chromium 浏览器定时访问 Gemini 页面，
-触发 Google 前端 JS 自动续期 __Secure-1PSIDTS，
-然后将最新 Cookie 写入共享文件并通知 gemini2api 热更新。
+Periodically visits the Gemini web page using a headless Chromium browser,
+triggering Google's client-side JS to automatically refresh __Secure-1PSIDTS,
+then writes updated cookies to the shared data file and notifies gemini2api.
 """
 import os
 import sys
@@ -17,12 +17,11 @@ STATE_DIR = os.path.join(DATA_DIR, "browser_states")
 COOKIES_OUTPUT = os.path.join(DATA_DIR, "refreshed_cookies.json")
 GEMINI2API_URL = os.environ.get("GEMINI2API_URL", "http://gemini2api:5918")
 API_KEY = os.environ.get("API_KEY", "")
-# /admin/* 路由由 verify_admin_key 鉴权：ADMIN_API_KEY 设置时用它，否则回退 API_KEY，
-# 与服务端 auth.verify_admin_key 的优先级保持一致（否则通知恒 401）。
+# /admin/* routes are authenticated via verify_admin_key: uses ADMIN_API_KEY if set, falls back to API_KEY,
+# matching the server-side auth priority.
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 ADMIN_KEY = ADMIN_API_KEY or API_KEY
-# 续期周期：优先读文档/.env 里的 REFRESH_INTERVAL（单位=分钟，与 README/主服务一致），
-# 兼容旧的 REFRESH_INTERVAL_SECONDS（单位=秒）；最终统一换算成秒。
+# Refresh interval: prefer REFRESH_INTERVAL in minutes, fall back to REFRESH_INTERVAL_SECONDS in seconds.
 _interval_seconds = os.environ.get("REFRESH_INTERVAL_SECONDS")
 if _interval_seconds is not None:
     REFRESH_INTERVAL = int(_interval_seconds)
@@ -51,7 +50,7 @@ def ensure_state_dir(account_id):
 
 
 def _state_psid(state_file):
-    """读取 state.json 中当前的 __Secure-1PSID，用于判断配置是否已轮换。"""
+    """Read current __Secure-1PSID in state.json to determine if credentials have rotated."""
     try:
         with open(state_file, "r") as f:
             state = json.load(f)
@@ -68,8 +67,7 @@ def inject_cookies_to_state(state_dir, psid, psidts):
     cookies = [
         {"name": "__Secure-1PSID", "value": psid, "domain": ".google.com", "path": "/", "secure": True, "httpOnly": True, "sameSite": "None"},
     ]
-    # 仅在 psidts 非空时写入：present-but-empty 的 __Secure-1PSIDTS 与“缺失”语义不同，
-    # 空值会污染浏览器状态、阻止 Google 前端 JS 重新签发 token（与主服务 cookie_jar 的处理一致）。
+    # Only write psidts when non-empty to avoid polluting browser state.
     if psidts:
         cookies.append({"name": "__Secure-1PSIDTS", "value": psidts, "domain": ".google.com", "path": "/", "secure": True, "httpOnly": True, "sameSite": "None"})
     state = {"cookies": cookies, "origins": []}
@@ -84,9 +82,7 @@ def refresh_account(browser, account):
     state_dir = ensure_state_dir(account_id)
     state_file = os.path.join(state_dir, "state.json")
 
-    # 首次运行注入，或当 refresher_accounts.json 中的源 PSID 已被运营者轮换
-    # （与 state.json 中已持久化的 PSID 不一致）时重新注入——否则旋转后的凭据被永久忽略，
-    # 过期账号无法通过编辑配置恢复。
+    # Inject on first run or when PSID has changed in refresher_accounts.json.
     if not os.path.exists(state_file) or _state_psid(state_file) != account["psid"]:
         inject_cookies_to_state(state_dir, account["psid"], account.get("psidts", ""))
 
@@ -122,11 +118,11 @@ def refresh_account(browser, account):
 
 def notify_gemini2api(account_id, psid, psidts):
     headers = {"Content-Type": "application/json"}
-    # /admin/* 用 ADMIN_KEY（ADMIN_API_KEY 优先，否则回退 API_KEY）。
+    # Use ADMIN_KEY for /admin/* endpoints
     if ADMIN_KEY:
         headers["Authorization"] = f"Bearer {ADMIN_KEY}"
 
-    # 优先按账号 ID 精确更新（多账号隔离）
+    # Prefer updating by account ID
     try:
         resp = http_requests.put(
             f"{GEMINI2API_URL}/admin/accounts/{account_id}/cookies",
@@ -138,7 +134,7 @@ def notify_gemini2api(account_id, psid, psidts):
             print(f"  [notify] {account_id} cookies updated via PUT")
             return True
         elif resp.status_code == 404:
-            # 账号不存在，fallback 到全局 reload
+            # Fall back to global reload if account is not found
             resp2 = http_requests.post(
                 f"{GEMINI2API_URL}/admin/reload-cookies",
                 json={"psid": psid, "psidts": psidts},

@@ -1,4 +1,4 @@
-/* 侧边栏 */
+/* Sidebar */
 .sidebar {
     width: 260px;
     background: var(--bg-glass);
@@ -51,7 +51,7 @@
     font-size: 1.1em;
 }
 
-/* 响应式调整 */
+/* Responsive Adjustments */
 @media (max-width: 768px) {
     .sidebar {
         width: 100%;
