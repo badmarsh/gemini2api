@@ -4,10 +4,37 @@ All notable changes to this project will be documented in this file. The format 
 
 ---
 
-## [Unreleased]
+## [1.7.1] - 2026-10-14 (badmarsh/gemini2api v1.7.1)
+
+> Security patch for the static-extension authentication bypass, failover and stream reliability fixes, and secret-handling and console hardening.
+
+### Security
+- **Static-extension authentication bypass (present in v1.7.0)**: the public-path check matched any path ending in a static extension regardless of method or prefix, so requests such as `DELETE /admin/accounts/test.png` skipped `verify_api_key` and `verify_admin_key`. The exemption now applies only to `GET`/`HEAD` and never under `/admin`, `/v1`, `/v1beta`, `/openai`, `/claude` or `/gemini`; the `/admin` prefix check is segment-based and `verify_admin_key` no longer exempts any path. Regression tests added.
+- Removed `add_cookies.py` (sent no auth header) and `add_account_cookies.py` (printed full cookies); both relied on an undeclared `requests` dependency.
+- Admin account status now masks `psidts` in addition to `psid`, and API key listings use the shared `mask_secret` helper.
+
+### Fixed
+- **Session lifecycle**: the shared HTTP session is leased per in-flight request; a session retired by a cookie reload or fingerprint rotation is closed by its last user instead of underneath running streams.
+- **Timeout failover**: a hung request (builtin/asyncio timeout or libcurl code 28) fails over to the next account immediately instead of consuming further same-account retries. Retry exhaustion raises a dedicated `RetriesExhaustedError`.
+- **Stall classification** matches exception types and codes only; free-text matching on error messages could misclassify ordinary 4xx responses.
+- **Google error-template detection** is limited to a known sentence plus at most a short single-line tail, so genuine answers that begin with the same words are no longer discarded.
+- **Cookie refresher**: reports an expired session when redirected to the Google login page, isolates per-account failures, and no longer passes `--single-process` / `--no-zygote` to the browser.
+- `ROTATION_STRATEGY` accepts `round_robin`, `Round-Robin` and padded values, so the README value no longer raises at startup.
+- `/admin/check-update` queries `badmarsh/gemini2api` instead of upstream.
+
+### Added
+- `WARNING` log with emitted and unparsed buffer sizes when the 120s chunk timeout ends a reply early (behavior unchanged).
+- Web console: domain services under `static/app/services/` (account, chat, telemetry, storage, validation), centralized constants, per-section error boundaries with retry, `AbortController` timeouts, and 200-item ring buffers for logs and playground history.
+- `safeStorage` wrapper with in-memory fallback and quota protection. The stored console token is obfuscated (XOR mask plus Base64), which is not encryption.
+- Unit and integration tests for masking, account pool state transitions, model alias translation, thinking-block extraction, auth bypass, failover classification and in-flight stream reloads.
 
 ### Changed
-- Bump `fastapi` 0.120.4 -> 0.143.0 and `starlette` 0.49.1 -> 1.8.0 (pinned together; the Starlette >= 0.49.1 floor for CVE-2025-62727 is preserved). Full suite unchanged: 772 passed, 1 skipped. Adds `opentelemetry-api` as a transitive dependency of FastAPI.
+- `mask_secret` now shows the first 6 and last 4 characters (previously 4 and 4); values of 8 characters or fewer are fully masked and values of 9-10 characters show 2 and 2.
+- Admin endpoint messages (`/admin/restart`, web-chat cleanup) are in English.
+- Bump `fastapi` 0.120.4 -> 0.143.0 and `starlette` 0.49.1 -> 1.8.0 (pinned together; the Starlette >= 0.49.1 floor for CVE-2025-62727 is preserved). Adds `opentelemetry-api` as a transitive dependency of FastAPI.
+- Tests are isolated from the real `data/` directory via `DATA_DIR`; the saturated-pool test tolerates Windows timer granularity.
+- CI: the `pip-audit` step is report-only and no longer produces red annotations.
+- Docs: CHANGELOG, UI templates, stylesheets and scripts localized to English; clone instructions point to the `badmarsh/gemini2api` fork.
 
 ---
 
