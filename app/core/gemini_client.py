@@ -1428,6 +1428,13 @@ class GeminiWebClient:
                             # open after the final frame. If content already
                             # streamed, finish cleanly instead of raising.
                             if emitted:
+                                logger.warning(
+                                    "generate_stream: no data for %ss after content started; "
+                                    "ending stream (emitted_chars=%d, unparsed_buf_chars=%d). "
+                                    "If the reply looks truncated, upstream may have stalled "
+                                    "before its final frame.",
+                                    chunk_timeout, len(emitted), len(buf),
+                                )
                                 break
                             raise
                         if not chunk:
