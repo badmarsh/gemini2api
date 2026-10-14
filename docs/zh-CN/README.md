@@ -8,36 +8,6 @@
 <h3>轻量级 Gemini Web 反向代理</h3>
 <p>一套代码兼容 OpenAI / Claude / Gemini 三大主流 AI SDK，纯异步架构，零官方 Key，Docker 快速部署。</p>
 
-<p>
-  <img src="https://img.shields.io/badge/Python-3.12+-blue?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/curl__cffi-Chrome%20TLS-ff6b35?style=flat-square&logo=google-chrome&logoColor=white" alt="curl_cffi">
-  <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/Chrome%20%7C%20Edge-Latest-4285F4?style=flat-square&logo=googlechrome&logoColor=white" alt="Browser">
-  <img src="https://img.shields.io/badge/License-Non--Commercial-red?style=flat-square" alt="License">
-</p>
-
-<p>
-  <a href="#-最近更新">最近更新</a> &bull;
-  <a href="#-核心功能">核心功能</a> &bull;
-  <a href="#-系统要求">系统要求</a> &bull;
-  <a href="#-快速部署">快速部署</a> &bull;
-  <a href="#-接入示例">接入示例</a> &bull;
-  <a href="#-api-端点">API 端点</a> &bull;
-  <a href="#-配置说明">配置说明</a> &bull;
-  <a href="#-注意事项">注意事项</a> &bull;
-  <a href="#-开发路线">开发路线</a>
-</p>
-
-<p>
-  📖 文档语言：简体中文 | <a href="../zh-TW/README.md">繁體中文</a> | <a href="../en/README.md">English</a> | <a href="../ja/README.md">日本語</a> | <a href="../ko/README.md">한국어</a>
-</p>
-
-<br>
-
-<a href="https://github.com/xwteam/gemini2api/issues"><img src="https://img.shields.io/github/issues/xwteam/gemini2api?style=flat-square" alt="Issues"></a>
-<a href="https://github.com/xwteam/gemini2api/stargazers"><img src="https://img.shields.io/github/stars/xwteam/gemini2api?style=flat-square" alt="Stars"></a>
-
 </div>
 
 ---

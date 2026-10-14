@@ -2,67 +2,30 @@
 
 <img src="docs/banner.png" alt="Gemini 4 Argon Multiaccount Failover Proxy" width="100%">
 
-<br><br>
+# Gemini2API
 
-<h1>Gemini2API</h1>
-<h3>Argon & Autonomous Agent Edition</h3>
-<p>Lightweight, high-performance Gemini Web reverse proxy with native Gemini 4 Argon thinking support, automated account failover, and agentic multi-turn context preservation. Compatible with OpenAI, Claude, and Gemini SDKs.</p>
+### Argon & Autonomous Agent Edition
 
-<p>
-  <img src="https://img.shields.io/badge/Python-3.12+-blue?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/curl__cffi-Chrome%20TLS-ff6b35?style=flat-square&logo=google-chrome&logoColor=white" alt="curl_cffi">
-  <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/Chrome%20%7C%20Edge-Latest-4285F4?style=flat-square&logo=googlechrome&logoColor=white" alt="Browser">
-  <img src="https://img.shields.io/badge/License-Non--Commercial-red?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v1.6.41--argon-success?style=flat-square" alt="Version">
-</p>
+A reverse proxy for Google Gemini Web with native **Gemini 4 Argon** reasoning support, automated multi-account failover, and multi-turn context retention for coding agents. Compatible with OpenAI, Claude, and Gemini SDKs.
 
-<p>
-  <a href="#-argon--agent-edition-highlights">Fork Highlights</a> &bull;
-  <a href="#-tutorial--quickstart">Tutorial & Quickstart</a> &bull;
-  <a href="#-autonomous-agent-setup">Agent Setup</a> &bull;
-  <a href="#-technical-architecture--deep-dive">Technical Deep Dive</a> &bull;
-  <a href="#-core-features">Core Features</a> &bull;
-  <a href="#-api-endpoints">API Endpoints</a> &bull;
-  <a href="#-configuration">Configuration</a>
-</p>
-
-<p>
-  📖 Documentation Language: <strong>English</strong> | <a href="docs/zh-CN/README.md">简体中文</a> | <a href="docs/zh-TW/README.md">繁體中文</a> | <a href="docs/ja/README.md">日本語</a> | <a href="docs/ko/README.md">한국어</a>
-</p>
-
-<br>
-
-<a href="https://github.com/badmarsh/gemini2api/issues"><img src="https://img.shields.io/github/issues/badmarsh/gemini2api?style=flat-square" alt="Issues"></a>
-<a href="https://github.com/badmarsh/gemini2api/stargazers"><img src="https://img.shields.io/github/stars/badmarsh/gemini2api?style=flat-square" alt="Stars"></a>
+[Quickstart](#-quickstart) &bull; [Agent Setup](#-agent-setup) &bull; [Architecture](#-technical-deep-dive) &bull; [API Endpoints](#-api-endpoints) &bull; [Docs in 简体中文](docs/zh-CN/README.md)
 
 </div>
 
 ---
 
-> [!NOTE]
-> **🚀 badmarsh/gemini2api (Gemini 4 Argon & Agent Hardened Edition)**:
-> This repository is an active, hardened public fork of [xwteam/gemini2api](https://github.com/xwteam/gemini2api).
-> It brings full upstream protocol compatibility for **Gemini 4 Argon (`gemini-4-argon`)**, 180s deep reasoning timeouts, automated Google Web error template failover, zero-stall cookie jar filtering, and multi-turn context preservation tailored for autonomous coding agents (Codex, OpenCode, Antigravity, Open Hands).
+## Key Changes & Enhancements
 
-> [!WARNING]
-> This project is for research and personal educational use only. It reverse-engineers browser cookies to interact with the Gemini Web interface and is not affiliated with Google. Use responsibly.
-
----
-
-## 🚀 Argon & Agent Edition Highlights
-
-| Feature | Upstream (`xwteam/gemini2api`) | This Fork (`badmarsh/gemini2api`) |
+| Component | Upstream (`xwteam/gemini2api`) | This Fork (`badmarsh/gemini2api`) |
 | :--- | :--- | :--- |
-| **Gemini 4 Argon Support** | ❌ Silent black-hole (legacy 4-element payload dropped by Google) | ✅ **Full Support**: 81-element thinking payload with `f.sid`/`bl` parameters and companion headers |
-| **Extended Reasoning Timeout** | ⚠️ 60s hard timeout (drops during 30–75s thinking phase) | ✅ **180s Timeout**: Supports deep reasoning models without socket dropouts |
-| **Google Web Error Interception** | ❌ Leaks UI error strings as valid AI output | ✅ **Auto-Failover**: Detects Google error templates, cools down account, and switches immediately |
-| **Stream Stability** | ⚠️ Intermittent 168-byte stream hangs | ✅ **Zero Stalls**: Purifies cookie jar to authentication-only cookies (`__Secure-1PSID`, `__Secure-1PSIDTS`) |
-| **Coding Agent Multi-Turn** | ⚠️ Flattens to single-turn on `gemini_conv_id`, breaking context | ✅ **Full Context Preservation**: Retains complete multi-turn message history for agent tool loops |
-| **OpenAI `developer` Role** | ❌ Unhandled or dropped | ✅ Transparently mapped to `System: <content>` |
-| **Staggered Initialization** | ❌ Simultaneous hits trigger `identity.hfcr` limit | ✅ 4-second inter-account delay prevents startup rate limiting |
-| **Admin Cookie Reload** | ⚠️ State remained in failure/expired status | ✅ Resets error counters, clears failures, marks `ACTIVE`, and persists immediately |
+| **Gemini 4 Argon Protocol** | Legacy 4-element payload (dropped by Google) | 81-element StreamGenerate payload (`inner[80]=2`, `f.sid`/`bl` params, companion headers) |
+| **Reasoning Timeout** | 60s hard limit (drops during 30–75s thinking) | 180s timeout across HTTP session and generation |
+| **Google Web Error Failover** | Returns web error templates as normal text | Intercepts UI error strings (`GoogleWebError`) and fails over to next warm account |
+| **Stream Hangs (168-byte bug)** | Persisted volatile telemetry cookies (`NID`, `AEC`) | Strict whitelist: `__Secure-1PSID` & `__Secure-1PSIDTS` only |
+| **Agent Multi-Turn History** | Collapsed to single message on `gemini_conv_id` | Retains full message history across turns |
+| **OpenAI `developer` Role** | Unhandled | Mapped to `System: <content>` |
+| **Account Pool Startup** | Simultaneous requests hit `identity.hfcr` | 4s inter-account startup delay |
+| **Admin Cookie Reload** | Status stayed degraded | Resets failure counters, marks `ACTIVE`, and persists immediately |
 
 ---
 

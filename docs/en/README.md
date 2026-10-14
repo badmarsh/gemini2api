@@ -8,36 +8,6 @@
 <h3>Lightweight Gemini Web Reverse Proxy</h3>
 <p>Single codebase compatible with OpenAI / Claude / Gemini SDKs, pure async architecture, zero official keys, Docker quick deployment.</p>
 
-<p>
-  <img src="https://img.shields.io/badge/Python-3.12+-blue?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/curl__cffi-Chrome%20TLS-ff6b35?style=flat-square&logo=google-chrome&logoColor=white" alt="curl_cffi">
-  <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/Chrome%20%7C%20Edge-Latest-4285F4?style=flat-square&logo=googlechrome&logoColor=white" alt="Browser">
-  <img src="https://img.shields.io/badge/License-Non--Commercial-red?style=flat-square" alt="License">
-</p>
-
-<p>
-  <a href="#-recent-updates">Recent Updates</a> &bull;
-  <a href="#-core-features">Core Features</a> &bull;
-  <a href="#-system-requirements">System Requirements</a> &bull;
-  <a href="#-quick-deployment">Quick Deployment</a> &bull;
-  <a href="#-integration-examples">Integration Examples</a> &bull;
-  <a href="#-api-endpoints">API Endpoints</a> &bull;
-  <a href="#-configuration">Configuration</a> &bull;
-  <a href="#-important-notes">Important Notes</a> &bull;
-  <a href="#-roadmap">Roadmap</a>
-</p>
-
-<p>
-  📖 Documentation: <a href="../zh-CN/README.md">简体中文</a> | <a href="../zh-TW/README.md">繁體中文</a> | English | <a href="../ja/README.md">日本語</a> | <a href="../ko/README.md">한국어</a>
-</p>
-
-<br>
-
-<a href="https://github.com/xwteam/gemini2api/issues"><img src="https://img.shields.io/github/issues/xwteam/gemini2api?style=flat-square" alt="Issues"></a>
-<a href="https://github.com/xwteam/gemini2api/stargazers"><img src="https://img.shields.io/github/stars/xwteam/gemini2api?style=flat-square" alt="Stars"></a>
-
 </div>
 
 ---
