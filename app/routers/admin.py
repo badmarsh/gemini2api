@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.config import APP_VERSION, mask_secret
-from app.core.account_pool import account_pool
+from app.core.account_pool import account_pool, AccountStatus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -199,6 +199,12 @@ async def update_account_cookies(account_id: str, req: UpdateCookiesRequest):
             if account.client:
                 result = await account.client.reload_cookies(psid=req.psid, psidts=req.psidts)
                 if result.get("success"):
+                    account.status = AccountStatus.ACTIVE
+                    account.psid = req.psid
+                    account.psidts = req.psidts
+                    account.consecutive_failures = 0
+                    account.last_error = ""
+                    account_pool._save_to_file()
                     return {"status": "ok", "message": f"Account {account_id} cookies updated"}
                 return JSONResponse(
                     status_code=503,

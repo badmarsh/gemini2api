@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 _IMAGE_DOWNLOAD_TIMEOUT = 25  # 单次 GET 超时（秒），避免 =s0 全分辨率拖垮整条链路
 _IMAGE_SIZE_DEFAULT = "=s2048"  # 2048px 边长足够预览，字节/耗时远小于 =s0
-_GENERATE_TIMEOUT_DEFAULT = 60  # 普通对话 POST 超时
+_GENERATE_TIMEOUT_DEFAULT = 180  # 普通对话 POST 超时（Argon/pro 深度思考常需 >60s）
 _GENERATE_TIMEOUT_IMAGE = 180  # 生图 POST 超时（pro 常 >60s，flash 通常 <60s）
 
 
@@ -32,6 +32,21 @@ class HTTPStatusError(Exception):
     def __init__(self, status_code: int, text: str = ""):
         self.status_code = status_code
         super().__init__(f"HTTP {status_code}: {text[:200]}")
+
+
+class GoogleWebError(RuntimeError):
+    """Google web frontend returned an upstream error template rather than model output."""
+    pass
+
+
+GOOGLE_WEB_ERROR_PHRASES = (
+    "Sorry, something went wrong. Please try your request again.",
+    "I encountered an error doing what you asked. Could you try again?",
+    "Something went wrong. Please try again.",
+    "An error occurred. Please try again.",
+    "I seem to be encountering an error. Can I try something else for you?",
+    "I seem to be encountering an error",
+)
 
 
 # account_pool.acquire() 抛出的三种"池打满/耗尽"RuntimeError 消息（均为动态拼接，故用子串匹配）。
@@ -74,6 +89,8 @@ def classify_error(exc: Exception) -> tuple[int, str, int | None]:
         return status, error_type, None
     if isinstance(exc, RuntimeError):
         msg = str(exc)
+        if isinstance(exc, GoogleWebError) or "google web error" in msg.lower():
+            return 502, "api_error", 2
         # 先判"会话失效"再判"池打满"：前者槽位是空的，重试不会好转，529 是误导（issue #11）。
         if NO_HEALTHY_ACCOUNT_MSG in msg:
             return 503, "api_error", None
@@ -111,27 +128,34 @@ GEMINI_MODELS = {
     "gemini-3-flash-advanced": {"id": "56fdd199312815e2", "capacity": 2, "pro_only": True, "family": "flash", "model_number": 1},
     "gemini-3-flash-thinking-advanced": {"id": "e051ce1aa80aa576", "capacity": 2, "pro_only": True, "family": "flash-thinking", "model_number": 1},
     "gemini-3-flash-lite-advanced": {"id": "8c46e95b1a07cecc", "capacity": 2, "pro_only": True, "family": "flash-lite", "model_number": 6},
+    "gemini-4-argon": {"id": "95a4c0abcba24364", "capacity": 2, "pro_only": True, "family": "argon", "model_number": 8, "thinking": True},
 }
 
 # 对外暴露的稳定模型名（永不变，API 契约）。客户端只认这 4 个，
 # 内部按账号当前真实可用的模型动态映射，账号订阅等级/Google 灰度怎么变都不影响 API。
-PUBLIC_MODELS = ["gemini-pro", "gemini-flash", "gemini-flash-thinking", "gemini-flash-lite"]
+PUBLIC_MODELS = ["gemini-pro", "gemini-flash", "gemini-flash-thinking", "gemini-flash-lite", "gemini-4-argon"]
 _PUBLIC_FAMILY = {
     "gemini-pro": "pro",
     "gemini-flash": "flash",
     "gemini-flash-thinking": "flash-thinking",
     "gemini-flash-lite": "flash-lite",
+    "gemini-argon": "argon",
+    "gemini-4-argon": "argon",
 }
-# 每个 family 的默认内部模型（账号没拉到真实模型时的兜底，按基础版）
+# 每个 family 的默认内部模型（账号没拉到真实模型时的兜底）。本池里 4 个账号都是
+# AI Pro：batchexecute 心跳返回 400 时 self._family_model 为空，兜底必须指向 Pro 档的
+# -advanced 内部模型，否则 pro/flash 会掉到免费档哈希（gemini-3-pro / -flash）。
 _FAMILY_DEFAULT = {
-    "pro": "gemini-3-pro",
-    "flash": "gemini-3-flash",
-    "flash-thinking": "gemini-3-flash-thinking",
-    "flash-lite": "gemini-3-flash-lite",
+    "pro": "gemini-3-pro-advanced",
+    "flash": "gemini-3-flash-advanced",
+    "flash-thinking": "gemini-3-flash-thinking-advanced",
+    "flash-lite": "gemini-3-flash-lite-advanced",
+    "argon": "gemini-4-argon",
 }
 
 MODEL_ALIASES = {
     # 旧版别名 → 公开名（再由公开名按账号动态解析），保留兼容
+    "gemini-argon": "gemini-4-argon",
     "gemini-2.5-pro": "gemini-pro",
     "gemini-2.5-flash": "gemini-flash",
     "gemini-2.5-flash-thinking": "gemini-flash-thinking",
@@ -179,33 +203,31 @@ def _resolve_model(model_name: str, family_model: dict[str, str] | None = None) 
 
 
 def _build_model_header(model_name: str) -> dict[str, str]:
+    """New StreamGenerate model header (2026-10-13 protocol change, probe6-verified).
+
+    15-element form with capabilities [4,5,6,8]. The flags at indices 11/14 are
+    thinking indicators and must match the payload's inner[80]: the 81-element
+    payload always sends inner[80]=2 (Argon is mandatory-thinking), so both stay 1.
+    Mismatched flags (probe6 variants F/G) get HTTP 200 with model-level error
+    text instead of a real answer.
+    """
     resolved = _resolve_model(model_name)
     model_info = GEMINI_MODELS.get(resolved)
     if not model_info:
         return {}
+    arr = [1, None, None, None, model_info["id"], None, None, 0, [4, 5, 6, 8],
+           None, None, 1, None, None, 1]
     return {
-        MODEL_HEADER_KEY: f'[1,null,null,null,"{model_info["id"]}",null,null,0,[4],null,null,{model_info["capacity"]}]',
+        MODEL_HEADER_KEY: json.dumps(arr, separators=(",", ":")),
         "x-goog-ext-73010989-jspb": "[0]",
-        "x-goog-ext-73010990-jspb": "[0]",
+        "x-goog-ext-73010990-jspb": "[0,0,0]",
     }
 
 
 def _build_model_header_thinking(model_name: str, session_uuid: str) -> dict[str, str]:
-    """PR#310 17-element model header with the extended-thinking flag (=2)."""
-    resolved = _resolve_model(model_name)
-    info = GEMINI_MODELS.get(resolved)
-    if not info:
-        return {}
-    mn = int(info.get("model_number", 1))
-    arr = [1, None, None, None, info["id"], None, None, 0, [4, 5, 6, 8],
-           None, None, info["capacity"], None, None, mn]
-    arr.append(2)               # 2 = extended thinking (1 = standard)
-    arr.append(session_uuid)
-    return {
-        MODEL_HEADER_KEY: json.dumps(arr),
-        "x-goog-ext-73010989-jspb": "[0]",
-        "x-goog-ext-73010990-jspb": "[0,0,0]",
-    }
+    """The 2026-10-13 protocol has a single header form for thinking and
+    non-thinking requests alike; delegate to _build_model_header."""
+    return _build_model_header(model_name)
 
 
 MODELS_CACHE_FILE = Path("data/models_cache.json")
@@ -422,6 +444,8 @@ class GeminiWebClient:
         self._session_uuid: str = str(uuid.uuid4()).upper()
         self._session_token: str = ""
         self._push_id: str = ""
+        self._bl: str = ""       # cfb2h from the /app page (StreamGenerate bl param)
+        self._f_sid: str = ""    # FdrFJe from the /app page (StreamGenerate f.sid param)
         self._available_models: list[str] = []
         self._lock = Lock()
         # 按账号实例存储 family→真实内部模型，避免模块级全局被多账号互相覆盖（P0-5）
@@ -465,7 +489,7 @@ class GeminiWebClient:
         self._current_target = header_builder.get_impersonate_target()
         self._http = AsyncSession(
             impersonate=self._current_target,
-            timeout=60,
+            timeout=180,
         )
 
         await self._obtain_session_token()
@@ -476,8 +500,11 @@ class GeminiWebClient:
         # 没有任何痕迹（没启动就什么都不打），排查 PSIDTS 过期类问题时只能靠读源码推断。
         if self._session_token:
             self._healthy = True
-            await self._send_heartbeat()
-            logger.info("Gemini client ready")
+            # 启动时不再打 batchexecute 心跳：本池每次返回 400（且 _FAMILY_DEFAULT 已覆盖
+            # 全部 family：argon/pro/flash/flash-thinking/flash-lite），模型映射不依赖它。
+            # 去掉它可减少启动期 RPC 突发（Google identity.hfcr 限频）。刷新循环里仍会调用，
+            # 万一以后需要重新发现模型也能恢复。
+            logger.info("Gemini client ready (startup heartbeat skipped)")
             logger.info(
                 "Auto-refresh loop NOT started (startup token OK; PSIDTS rotation only runs "
                 "after a failed start or a manual cookie reload)"
@@ -525,7 +552,7 @@ class GeminiWebClient:
                 return
             logger.info(f"TLS 指纹更新: {self._current_target} -> {target}")
             old = self._http
-            self._http = AsyncSession(impersonate=target, timeout=60)
+            self._http = AsyncSession(impersonate=target, timeout=180)
             self._current_target = target
             if old is not None:
                 try:
@@ -538,6 +565,49 @@ class GeminiWebClient:
 
     def _get_headers(self, method: str = "GET", content_type: str | None = None) -> dict:
         return dict(header_builder.build(url=GEMINI_APP_URL, method=method, content_type=content_type))
+
+    def _stream_generate_params(self, bl: str | None = None, f_sid: str | None = None) -> dict[str, str]:
+        """URL params the post-Argon StreamGenerate protocol requires (probe6-verified).
+        Without bl/f.sid Google black-holes the POST (0 bytes until timeout).
+        bl/f_sid default to the shared page tokens; the streaming path passes
+        the per-session tokens it minted on its own temp session."""
+        params = {
+            "hl": "en",
+            "_reqid": str(random.randint(100000, 999999)),
+            "rt": "c",
+            "source-path": "/app",
+        }
+        bl = self._bl if bl is None else bl
+        f_sid = self._f_sid if f_sid is None else f_sid
+        if bl:
+            params["bl"] = bl
+        if f_sid:
+            params["f.sid"] = f_sid
+        return params
+
+    def _fingerprint_ua(self) -> str:
+        cfg = fingerprint_config.config
+        return (
+            f"Mozilla/5.0 (Windows NT {cfg.platform.os_version}; Win64; x64) "
+            f"AppleWebKit/537.36 (KHTML, like Gecko) "
+            f"Chrome/{cfg.chrome.full} Safari/537.36"
+        )
+
+    def _stream_generate_headers(self) -> dict[str, str]:
+        """Probe-verified (probe6/probe10, 2026-10-13) minimal header set for
+        StreamGenerate POSTs. curl_cffi's chrome150 impersonation injects its
+        own native sec-ch-ua at the C layer: explicitly sending a UA/sec-ch-ua
+        pair that disagrees with it (or duplicating it) makes Google hold the
+        stream open right after the routing frame. The UA major must match the
+        TLS impersonation target, and header_builder's full set (sec-ch-ua/
+        Sec-Fetch/Accept-*) trips the same check — don't send those on this path."""
+        return {
+            "User-Agent": self._fingerprint_ua(),
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "https://gemini.google.com",
+            "Referer": "https://gemini.google.com/app",
+            "X-Same-Domain": "1",
+        }
 
     async def check_account(self) -> dict:
         now = datetime.now(timezone.utc).isoformat()
@@ -635,7 +705,12 @@ class GeminiWebClient:
             await apply_jitter("navigation")
             self._clear_session_cookies()
             cookies = self._get_cookies()
-            resp = await self._http.get(GEMINI_APP_EN_URL, cookies=cookies, headers=headers)
+            # The /app mint GET mirrors the probe: UA only. The token mint
+            # context must match the StreamGenerate POST's header set.
+            resp = await self._http.get(
+                GEMINI_APP_EN_URL, cookies=cookies,
+                headers={"User-Agent": self._fingerprint_ua()},
+            )
             self._cookie_jar.update_from_response(resp)
 
             if resp.status_code != 200:
@@ -647,6 +722,14 @@ class GeminiWebClient:
 
             body = resp.text
             token_match = re.search(r'"SNlM0e":"([^"]+)"', body)
+            bl_match = re.search(r'"cfb2h":"([^"]+)"', body)
+            fsid_match = re.search(r'"FdrFJe":"([^"]+)"', body)
+            if bl_match:
+                self._bl = bl_match.group(1)
+            if fsid_match:
+                self._f_sid = fsid_match.group(1)
+            if not (bl_match and fsid_match):
+                logger.warning("cfb2h/FdrFJe missing from page; StreamGenerate may fail")
             if token_match:
                 self._session_token = token_match.group(1)
                 self._push_id = _extract_push_id(body)
@@ -1022,6 +1105,8 @@ class GeminiWebClient:
                     for m in models_list:
                         if isinstance(m, list) and m and isinstance(m[0], str):
                             discovered_ids.append(m[0])
+                    if discovered_ids:
+                        logger.info(f"RAW ACCOUNT MODELS ({len(discovered_ids)}): {json.dumps(models_list, ensure_ascii=False)}")
                     # 内部 model_id -> 内部模型名 -> 按 family 记录账号真实可用模型
                     id_to_name = _build_id_alias_map()
                     family_model = {}
@@ -1226,18 +1311,15 @@ class GeminiWebClient:
             if not file_ids:
                 logger.warning("All attachment uploads failed, streaming text-only")
 
-        if extended_thinking:
-            encoded, uuid_val = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
-            model_headers = _build_model_header_thinking(resolved, self._session_uuid)
-        else:
-            encoded = self._encode_payload(prompt, resolved, conversation_id, file_ids, gem_id)
-            model_headers = _build_model_header(resolved)
-        form_data = {"at": self._session_token, "f.req": encoded}
-        headers = self._get_headers("POST", content_type="application/x-www-form-urlencoded")
+        # Same 2026-10-13 protocol requirements as _send_request: 81-element
+        # thinking payload (Argon is mandatory-thinking), 15-element model
+        # header, companion headers, bl/f.sid URL params.
+        encoded, _ = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
+        model_headers = _build_model_header(resolved)
+        headers = self._stream_generate_headers()
         if model_headers:
             headers.update(model_headers)
-        if extended_thinking:
-            headers["x-goog-ext-525005358-jspb"] = f'["{uuid_val}",1]'
+        headers["x-goog-ext-525005358-jspb"] = f'["{str(uuid.uuid4()).upper()}",1]'
 
         buf = ""
         emitted = ""             # 已 yield 出去的完整文本（用于和新帧比前缀算增量）
@@ -1248,11 +1330,18 @@ class GeminiWebClient:
         last_images: list = []
         chunk_timeout = 120      # 单个 chunk 最长等待（兜底 #215 timeout 失效）
 
-        session = AsyncSession(impersonate=self._current_target, timeout=180)
+        # Warm shared session: at/bl/f.sid were minted on self._http in
+        # _obtain_session_token, so the POST must ride that same HTTP/2
+        # connection. Mint once per account, never per request — re-fetching
+        # /app on every turn churns web sessions and trips Google's
+        # RotateCookies HFCR limit (identity.hfcr 600).
+        session = self._http
         try:
             async with session.stream(
                 "POST", GENERATE_URL,
-                data=form_data, cookies=cookies, headers=headers,
+                params=self._stream_generate_params(),
+                data={"at": self._session_token, "f.req": encoded}, cookies=cookies, headers=headers,
+                timeout=180,
             ) as resp:
                 try:
                     if resp.status_code >= 400:
@@ -1265,6 +1354,13 @@ class GeminiWebClient:
                             chunk = await asyncio.wait_for(aiter.__anext__(), timeout=chunk_timeout)
                         except StopAsyncIteration:
                             break
+                        except asyncio.TimeoutError:
+                            # rt=c keep-alive: Google can hold the HTTP/2 stream
+                            # open after the final frame. If content already
+                            # streamed, finish cleanly instead of raising.
+                            if emitted:
+                                break
+                            raise
                         if not chunk:
                             continue
                         buf += chunk.decode("utf-8", "replace")
@@ -1288,6 +1384,8 @@ class GeminiWebClient:
                                 last_images = imgs
                             if text is None:
                                 continue
+                            if not emitted and any(text.strip().startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES):
+                                raise GoogleWebError(f"Google web error: {text.strip()}")
                             # last_text 始终存原始累积文本，供收尾 _finalize_stream 统一过滤占位串。
                             last_text = text
                             # 计算"可安全 emit 的稳定前缀"：剥掉已完整的占位 URL，并 hold 住任何
@@ -1313,10 +1411,8 @@ class GeminiWebClient:
                     except Exception:
                         pass
         finally:
-            try:
-                await session.close()
-            except Exception:
-                pass
+            # self._http is the shared long-lived session — never close it here.
+            pass
 
         yield await self._finalize_stream(last_text, last_conv, last_images, last_thoughts)
 
@@ -1349,6 +1445,9 @@ class GeminiWebClient:
                     result_images.append(entry)
             # 生图时模型文本里的占位 URL 无意义，过滤掉（与 _parse_output 一致）
             text = _IMAGE_GEN_PLACEHOLDER_RE.sub("", text).strip()
+        stripped = text.strip()
+        if stripped and any(stripped.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES):
+            raise GoogleWebError(f"Google web error: {stripped}")
         return {
             "type": "final",
             "text": text,
@@ -1362,7 +1461,6 @@ class GeminiWebClient:
                            extended_thinking: bool = False) -> dict:
         await apply_jitter("api_call")
         await self._ensure_session_current()
-        self._clear_session_cookies()
 
         resolved = _resolve_model(model, self._family_model)
         cookies = self._get_cookies()
@@ -1378,26 +1476,30 @@ class GeminiWebClient:
             if not file_ids:
                 logger.warning("All attachment uploads failed, falling back to text-only")
 
-        if extended_thinking:
-            encoded, uuid_val = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
-            model_headers = _build_model_header_thinking(resolved, self._session_uuid)
-        else:
-            encoded = self._encode_payload(prompt, resolved, conversation_id, file_ids, gem_id)
-            model_headers = _build_model_header(resolved)
-        form_data = {"at": self._session_token, "f.req": encoded}
-        headers = self._get_headers("POST", content_type="application/x-www-form-urlencoded")
+        # 2026-10-13 protocol change (Argon rollout): StreamGenerate only answers
+        # the 81-element thinking payload + bl/f.sid URL params + 15-element header
+        # with companion headers; the legacy 4-element payload is silently
+        # black-holed (probe5/probe6). Argon is a mandatory-thinking model, so
+        # inner[80]=2 unconditionally, regardless of extended_thinking.
+        encoded, _ = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
+        model_headers = _build_model_header(resolved)
+        headers = self._stream_generate_headers()
         if model_headers:
             headers.update(model_headers)
-        if extended_thinking:
-            headers["x-goog-ext-525005358-jspb"] = f'["{uuid_val}",1]'
+        headers["x-goog-ext-525005358-jspb"] = f'["{str(uuid.uuid4()).upper()}",1]'
 
         gen_timeout = (
             _GENERATE_TIMEOUT_IMAGE if maybe_image_generation_intent(prompt)
             else _GENERATE_TIMEOUT_DEFAULT
         )
+        # Warm shared session: at/bl/f.sid were minted on self._http in
+        # _obtain_session_token, so the POST rides that same connection.
+        # Mint once per account, never per request (per-request /app fetches
+        # churn sessions and trip Google's RotateCookies HFCR limit).
         resp = await self._http.post(
-            GENERATE_URL, data=form_data, cookies=cookies, headers=headers,
-            timeout=gen_timeout,
+            GENERATE_URL, params=self._stream_generate_params(),
+            data={"at": self._session_token, "f.req": encoded}, cookies=cookies,
+            headers=headers, timeout=gen_timeout,
         )
         self._cookie_jar.update_from_response(resp)
 
@@ -1542,6 +1644,10 @@ class GeminiWebClient:
             if had_placeholder and not text_content and not images:
                 text_content = "（没有生成图片。试试更明确的生成指令，如「画一张…」「生成一张…的图片」。）"
 
+        stripped = text_content.strip()
+        if stripped and any(stripped.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES):
+            raise GoogleWebError(f"Google web error: {stripped}")
+
         return {"text": text_content, "conversation_id": conv_id, "images": images, "thoughts": thoughts_content}
 
     @staticmethod
@@ -1642,7 +1748,7 @@ class GeminiWebClient:
             # Recreate HTTP session to avoid accumulated cookie conflicts
             if self._http:
                 await self._http.close()
-            self._http = AsyncSession(impersonate=self._current_target, timeout=60)
+            self._http = AsyncSession(impersonate=self._current_target, timeout=180)
 
             self._cookie_jar.set("__Secure-1PSID", self._psid)
             if self._psidts:

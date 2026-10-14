@@ -7,7 +7,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from app.core.gemini_client import GeminiWebClient, HTTPStatusError, NO_HEALTHY_ACCOUNT_MSG
+from app.core.gemini_client import GeminiWebClient, HTTPStatusError, NO_HEALTHY_ACCOUNT_MSG, GoogleWebError
 from app.core.fallback import is_empty_result
 from app.config import settings
 from app.core.usage_metrics import live_metrics
@@ -35,15 +35,43 @@ def _is_5xx(exc: Exception) -> bool:
     return isinstance(exc, HTTPStatusError) and 500 <= exc.status_code < 600
 
 
+_STALL_HINTS = (
+    "operation timed out", "timed out", "timeout",
+    "failed to generate", "exhausted",
+)
+
+
+def _is_stall(exc: Exception) -> bool:
+    """请求挂死 / 同账号重试耗尽。
+
+    三种形态都要判成可 failover：
+    - curl_cffi 超时抛 RequestsError，消息含 "Operation timed out"（非流式路径）；
+    - gemini_client.generate() 耗尽重试后抛 RuntimeError("Exhausted N retries: ...")；
+    - generate_stream() 首帧超时抛 asyncio.TimeoutError（消息为空，只能按类型判）。
+
+    该账号的 web 会话已卡住，同账号重试毫无意义 —— 冷却它并立刻换下一个 warm 账号
+    （2026-10-14：3.1 Pro 那次调用就是这样卡了 3 分钟）。
+    """
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    msg = str(exc).lower()
+    return any(h in msg for h in _STALL_HINTS)
+
+
 def _is_retryable(exc: Exception) -> bool:
     """可换账号 failover 重试的错误集合（Issue#1-A）：
     - 5xx（含 Google 503 限流）：冷却该账号后换号
     - RuntimeError 且含 "not ready"：客户端会话未就绪，换健康账号
+    - 挂死/超时：该账号会话卡住，冷却后换号
     - HTTPStatusError 401/403：凭据失效，换号并标记 EXPIRED
     """
     if _is_5xx(exc):
         return True
+    if isinstance(exc, GoogleWebError) or "google web error" in str(exc).lower():
+        return True
     if isinstance(exc, RuntimeError) and "not ready" in str(exc).lower():
+        return True
+    if _is_stall(exc):
         return True
     if isinstance(exc, HTTPStatusError) and exc.status_code in (401, 403):
         return True
@@ -165,7 +193,11 @@ class AccountPool:
         else:
             self._add_from_env()
 
-        for account in self._accounts:
+        for i, account in enumerate(self._accounts):
+            if i:
+                # 错峰启动：容器重启时若同时给多个账号打 /app + batchexecute，同一出口 IP
+                # 的突发会被 Google 视作高频客户端（identity.hfcr），据此限频。
+                await asyncio.sleep(4)
             await self._init_account_client(account)
 
         active = self.active_count
@@ -789,10 +821,10 @@ class AccountPool:
             except Exception as e:
                 live_metrics.record_request(model, (time.time() - t0) * 1000)
                 if _is_retryable(e):
-                    # 可重试：5xx 冷却该账号、401/403 标 expired，换下一个账号重试
+                    # 可重试：5xx/挂死冷却该账号、401/403 标 expired，换下一个账号重试
                     last_err = e
                     tried.add(account.id)
-                    await self.release(account, success=False, cooldown=_is_5xx(e), error=_error_summary(e))
+                    await self.release(account, success=False, cooldown=_is_5xx(e) or _is_stall(e) or "google web error" in str(e).lower(), error=_error_summary(e))
                     released = True
                     if isinstance(e, HTTPStatusError) and e.status_code in (401, 403):
                         account.status = AccountStatus.EXPIRED
@@ -874,7 +906,7 @@ class AccountPool:
                 if _is_retryable(e) and not emitted_any:
                     last_err = e
                     tried.add(account.id)
-                    await self.release(account, success=False, cooldown=_is_5xx(e), error=_error_summary(e))
+                    await self.release(account, success=False, cooldown=_is_5xx(e) or _is_stall(e) or "google web error" in str(e).lower(), error=_error_summary(e))
                     released = True
                     if isinstance(e, HTTPStatusError) and e.status_code in (401, 403):
                         account.status = AccountStatus.EXPIRED

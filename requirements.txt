@@ -2,7 +2,7 @@ fastapi==0.115.12
 uvicorn[standard]==0.34.2
 pydantic==2.11.3
 pydantic-settings==2.9.1
-curl_cffi==0.7.4
+curl_cffi==0.16.3
 python-dotenv==1.1.0
 sse-starlette==2.3.3
 slowapi==0.1.9

@@ -26,6 +26,10 @@ class TestBuildPromptFromMessages:
         out = prompt.build_prompt_from_messages([{"role": "user", "content": "q"}], system="be nice")
         assert out.startswith("System: be nice")
 
+    def test_developer_role_labeled_as_system(self):
+        out = prompt.build_prompt_from_messages([{"role": "developer", "content": "instructions"}])
+        assert out == "System: instructions"
+
     def test_list_content_blocks_flattened(self):
         out = prompt.build_prompt_from_messages(
             [{"role": "user", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}]

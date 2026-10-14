@@ -41,6 +41,10 @@ accounts.json
 # Test / lint caches
 .pytest_cache/
 .ruff_cache/
+.tmp_pytest/
 .coverage
 coverage.xml
 htmlcov/
+
+# Local Compose Overrides
+docker-compose.override.yml

@@ -4,6 +4,24 @@
 
 ---
 
+## [1.6.41-argon] - 2026-10-14 (badmarsh/gemini2api fork)
+
+> 针对 **Gemini 4 Argon** 强制思考协议更新、长时间推理挂起、Google Web 错误模板探测与多轮 Coding Agent 会话保活的专项强化版本。
+
+### Added
+- 🧠 **Gemini 4 Argon 协议适配 (StreamGenerate 81 项载荷)**：适配 2026 年 10 月 Google Gemini Web 接口协议变化。支持 81 项 thinking payload 结构、`f.sid`/`bl` 追踪参数与 15 项 companion headers。对 Argon 模型强制开启内部思考状态 (`inner[80]=2`)，解决旧版 4 项载荷静默黑洞无响应的问题。
+- 🛡️ **Google Web 错误模板自动拦截与即时 Failover**：当 Gemini Web 界面吐出如 `"I seem to be encountering an error. Can I try something else for you?"` 或 `"Sorry, something went wrong"` 等模板错误时，不再原样作为回答流出，而是判定为 `GoogleWebError`，使当前账号进入 cooldown 冷却，并无缝 failover 到池中下一个健康账号重试。
+- ⏱️ **会话挂死检测与账号自愈 (_is_stall)**：在 `account_pool.py` 中引入挂死与超时探测，对连接卡死或首帧超时的账号迅速释放并冷却，防止后续请求持续阻塞在失效客户端上。
+- 🍪 **Cookie Jar 白名单过滤 (终结 168 字节卡死)**：`cookie_jar.py` 严格白名单持久化 `__Secure-1PSID` 与 `__Secure-1PSIDTS`，自动过滤 `NID`、`SIDCC`、`AEC`、`OTZ` 等易变反滥用 Cookie，彻底杜绝跨进程重放易变 Cookie 引起的 168 字节响应流中断挂死。
+- 🚦 **错峰启动防限流**：容器重启或账号池批量初始化时，各账号之间增加 4 秒错峰延迟，避免同一出口 IP 短时间并发打 `/app` 和 `batchexecute` 触发 Google `identity.hfcr` 限流。
+- 🛠️ **OpenAI API developer role 映射**：OpenAI 格式消息列表中的 `developer` 角色（Codex / OpenCode / o1/o3-mini 标准）自动转换为 `System: <content>`。
+
+### Changed
+- ⌛ **长思考超时放宽至 180s**：`_GENERATE_TIMEOUT_DEFAULT` 与底层 `AsyncSession` 超时由 60s 提升至 180s，完美适配 Gemini 4 Argon 深度思考阶段（普遍需要 30–75s 思考）而不触发客户端或网关断连。
+- 💬 **多轮 Agent 历史完整保留**：当外部 Coding Agent（如 Codex、OpenCode、Antigravity、OpenAI SDK）携带多轮历史调用接口时，优先保留完整上下文并清空 `gemini_conv_id`，防止跨账号负载均衡时因云端单账号会话不存在而导致的截断与上下文丢失。
+- 🔑 **管理员 Cookie 重置修复**：通过 `/admin/accounts/{id}/cookies` 更新凭据后，自动将账号状态复位为 `ACTIVE`，清零连续失败计数并清除错误信息，立即持久化落盘。
+- 📦 **依赖升级**：`curl_cffi` 升级至 `0.16.3`。
+
 ## [1.6.40] - 2026-09-12
 
 > 来自 [issue #11](https://github.com/xwteam/gemini2api/issues/11) 追加反馈的排查成果。报告人贴出的面板截图显示账号 **ACTIVE / Errors 0 / Models 4**、聊天框却只有一句「无响应内容」——排查后发现**这四个数字没有一个能用**，面板在故障时会掩盖真实原因。本版专治这一点。

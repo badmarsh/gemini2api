@@ -124,7 +124,7 @@ def build_prompt_from_messages(messages: list[dict], system: str | None = None,
             if call_parts:
                 content = "\n".join([content, *call_parts]) if content else "\n".join(call_parts)
 
-        if role == "system":
+        if role in ("system", "developer"):
             parts.append(f"System: {content}")
         elif role == "user":
             parts.append(f"Human: {content}")

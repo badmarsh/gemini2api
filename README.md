@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Docker-20.10+-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/Chrome%20%7C%20Edge-Latest-4285F4?style=flat-square&logo=googlechrome&logoColor=white" alt="Browser">
   <img src="https://img.shields.io/badge/License-Non--Commercial-red?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/version-v1.6.40-success?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.6.41--argon-success?style=flat-square" alt="Version">
 </p>
 
 <p>
@@ -34,12 +34,26 @@
 
 <br>
 
-<a href="https://github.com/xwteam/gemini2api/issues"><img src="https://img.shields.io/github/issues/xwteam/gemini2api?style=flat-square" alt="Issues"></a>
-<a href="https://github.com/xwteam/gemini2api/stargazers"><img src="https://img.shields.io/github/stars/xwteam/gemini2api?style=flat-square" alt="Stars"></a>
+<a href="https://github.com/badmarsh/gemini2api/issues"><img src="https://img.shields.io/github/issues/badmarsh/gemini2api?style=flat-square" alt="Issues"></a>
+<a href="https://github.com/badmarsh/gemini2api/stargazers"><img src="https://img.shields.io/github/stars/badmarsh/gemini2api?style=flat-square" alt="Stars"></a>
 
 </div>
 
 ---
+
+> [!NOTE]
+> **🚀 badmarsh/gemini2api (Gemini 4 Argon & Agent Edition)**:
+> This is a hardened public fork of [xwteam/gemini2api](https://github.com/xwteam/gemini2api).
+> 
+> **Key Enhancements in this Fork:**
+> - **Gemini 4 Argon & Thinking Protocol Support**: Full compatibility with the October 2026 Gemini Web protocol changes (81-element thinking payload with `f.sid`/`bl` parameter encoding and companion headers). Mandatory inner thinking state (`inner[80]=2`) is handled cleanly without black-holing.
+> - **180s Extended Agentic Timeouts**: Generation and session timeouts raised to 180s to accommodate Argon's 30–75s thinking phase without premature socket disconnects.
+> - **Google Web Error Interception & Instant Failover**: Detects Google Web UI error templates (e.g. `"I seem to be encountering an error. Can I try something else for you?"`, `"Sorry, something went wrong"`) in both streaming and buffered modes, automatically puts the failing account on cooldown, and fails over to the next healthy account.
+> - **Zero 168-Byte Stalls (Cookie Jar Whitelisting)**: Restricts persisted cookies to authentic credentials (`__Secure-1PSID` and `__Secure-1PSIDTS`), dropping volatile session anti-abuse cookies (`NID`, `SIDCC`, `AEC`, `OTZ`) that break streams across processes.
+> - **Multi-Turn Context Preservation**: Preserves full conversation history for autonomous coding agents (Codex, OpenCode, OpenAI SDK, Antigravity) rather than dropping history or desyncing across accounts.
+> - **Developer Role Mapping**: Maps OpenAI `developer` role messages to `System: <content>`.
+> - **Staggered Startup**: 4s delay between account initializations to prevent bursting Google's `identity.hfcr` limit on restart.
+> - **Admin Cookie State Recovery**: `/admin/accounts/{id}/cookies` updates immediately restore `ACTIVE` status, clear consecutive failures and errors, and persist state.
 
 > [!NOTE]
 > 本项目仅供研究和学习用途，请合理使用，不要用于任何商业目的。

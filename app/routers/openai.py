@@ -13,7 +13,10 @@ from app.core.account_pool import account_pool as gemini_client
 from app.core.api_forwarder import forward_to_provider, open_stream
 from app.core.fallback import fallback_enabled, is_empty_result, get_fallback_entries, openai_data_is_empty
 from app.core.conversation_store import conversation_store
-from app.core.gemini_client import GEMINI_MODELS, MODEL_ALIASES, _resolve_model, HTTPStatusError, classify_error
+from app.core.gemini_client import (
+    GEMINI_MODELS, MODEL_ALIASES, _resolve_model, HTTPStatusError, classify_error,
+    GoogleWebError, GOOGLE_WEB_ERROR_PHRASES,
+)
 from app.core.stream import split_into_chunks, format_sse, iter_with_keepalive, SSE_KEEPALIVE_INTERVAL, SSE_KEEPALIVE_FRAME, sse_keepalive_during
 from app.models.openai import (
     ChatRequest, ChatResponse, Choice, ChoiceMessage,
@@ -281,24 +284,21 @@ async def chat_completions(req: ChatRequest, request: Request):
         if conv and conv.gemini_conv_id:
             gemini_conv_id = conv.gemini_conv_id
 
-    # 如果有有效的 gemini_conv_id，只发最新一条用户消息
-    if gemini_conv_id and messages_raw:
+    # 如果有有效的 gemini_conv_id 且客户端只传了单轮消息（依赖服务端维持状态），只发最新一条用户消息
+    # 如果客户端携带了多轮历史（如 OpenAI SDK / Codex 客户端），优先保留完整上下文并清空 gemini_conv_id，避免跨账号会话失效
+    if gemini_conv_id and len(messages_raw) <= 1:
         last_user_msg = ""
         for msg in reversed(messages_raw):
             if msg.get("role") == "user":
                 content = msg.get("content", "")
                 if isinstance(content, list):
-                    # 注意：这里对"没有可用 text 的 dict 块"（如纯图片块）刻意保留一个空串贡献，
-                    # 与 app/utils/prompt.py 里直接跳过该类块的做法不同 —— 不是笔误。原因是下一行的
-                    # 分支选择逻辑依赖此结果的真假值：纯图片消息展平后是 "\n"（非空即真），仍走
-                    # continuation 分支只发最新一条；若改成跳过就会变成 ""（假），错误落回
-                    # build_prompt_from_messages 把整段历史重发一遍。保留空串 = 保持既有行为逐字节不变。
                     content = "\n".join(b.get("text", "") if isinstance(b.get("text", ""), str) else ""
                                         for b in content if isinstance(b, dict))
                 last_user_msg = content
                 break
         prompt = last_user_msg if last_user_msg else build_prompt_from_messages(messages_raw)
     else:
+        gemini_conv_id = ""
         prompt = build_prompt_from_messages(messages_raw)
 
     has_tools = bool(req.tools)
@@ -379,11 +379,21 @@ async def chat_completions(req: ChatRequest, request: Request):
                     headers=headers,
                 )
 
-    # Gemini 返回空响应（无文本、无图）→ 第三方兜底（开关关闭/无候选时返回 None，零回归）
-    if is_empty_result(result):
+    # Gemini 返回空响应（无文本、无图）或 Google web 错误 → 第三方兜底（开关关闭/无候选时返回 None，零回归）
+    res_text = (result.get("text") or "").strip()
+    is_err_text = bool(res_text and any(res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
+    if is_empty_result(result) or is_err_text:
         fb = await _fallback_result(request, req, messages_raw, resolved_model)
         if fb is not None:
             return JSONResponse(content=fb)
+        if is_err_text:
+            status, err_type, retry_after = classify_error(RuntimeError(res_text))
+            headers = {"Retry-After": str(retry_after)} if retry_after else None
+            return JSONResponse(
+                status_code=status,
+                content={"error": {"message": res_text, "type": err_type}},
+                headers=headers,
+            )
 
     text = result.get("text", "")
     # AI 生成图片：图片在前，紧跟文字描述（单换行，不留多余空行）
@@ -579,13 +589,18 @@ async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv
             yield _err_chunk(e)
             return
 
-    # Gemini 真流式整条为空（只发过 role 首帧，未流出任何内容）→ 第三方兜底
-    if not streamed_any and not (full_text or "").strip() and not final_images:
+    # Gemini 真流式整条为空或 Google web 错误 → 第三方兜底
+    stripped_full = (full_text or "").strip()
+    is_err_text = bool(stripped_full and any(stripped_full.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
+    if is_err_text or (not streamed_any and not stripped_full and not final_images):
         emitted = False
         async for chunk in _maybe_fallback_stream(request, req, messages_raw, model, completion_id, model_name):
             emitted = True
             yield chunk
         if emitted:
+            return
+        if is_err_text:
+            yield _err_chunk(RuntimeError(stripped_full))
             return
 
     # 生图兜底：极少数生图意图未被识别而走了真流式（文字已先流出，无法把图收回到最前）。
@@ -690,13 +705,18 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
             yield _err_chunk(e)
             return
 
-    # Gemini 返回空响应（无文本、无图）→ 第三方兜底（此前只发过 role 首帧 + keepalive，可安全改流）
-    if is_empty_result(result):
+    # Gemini 返回空响应（无文本、无图）或 Google web 错误 → 第三方兜底（此前只发过 role 首帧 + keepalive，可安全改流）
+    raw_res_text = (result.get("text") or "").strip()
+    is_err_text = bool(raw_res_text and any(raw_res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
+    if is_empty_result(result) or is_err_text:
         emitted = False
         async for chunk in _maybe_fallback_stream(request, req, messages_raw, model, completion_id, model_name):
             emitted = True
             yield chunk
         if emitted:
+            return
+        if is_err_text:
+            yield _err_chunk(RuntimeError(raw_res_text))
             return
 
     text = result.get("text", "")
