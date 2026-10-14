@@ -1,6 +1,8 @@
 <div align="center">
 
-<img src="docs/logo.png" width="128" height="128" alt="Gemini2API">
+<img src="docs/banner.png" alt="Gemini 4 Argon Multiaccount Failover Proxy" width="100%">
+
+<br><br>
 
 <h1>Gemini2API</h1>
 <h3>Argon & Autonomous Agent Edition</h3>

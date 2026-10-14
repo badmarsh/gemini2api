@@ -1,6 +1,8 @@
 <div align="center">
 
-<img src="../logo.png" width="128" height="128" alt="Gemini2API">
+<img src="../banner.png" alt="Gemini 4 Argon Multiaccount Failover Proxy" width="100%">
+
+<br><br>
 
 <h1>Gemini2API</h1>
 <h3>轻量级 Gemini Web 反向代理</h3>
