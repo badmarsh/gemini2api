@@ -227,11 +227,23 @@ class TestParseToolResponse:
         assert out["tool_calls"][0]["arguments"] == {"a": 1}
 
     def test_malformed_tool_json_not_passed_through(self):
-        # 残缺的工具调用 JSON 不应原样透传给客户端
+        # Malformed tool call JSON should not be passed through raw to clients
         raw = '{"status": "tool_use", "tool_calls": [{"name": "x", "argumen'
         out = tools.parse_tool_response(raw)
         assert out["type"] == "text"
-        assert "工具调用" in out["content"]
+        assert "tool call" in out["content"].lower()
+
+    def test_text_status_with_literal_control_chars_unwrapped(self):
+        # When model returns {"status": "text", "content": "..."} with unescaped literal newlines/tabs
+        raw = '{\n  "status": "text",\n  "content": "Line 1\nLine 2\twith tab"\n}'
+        out = tools.parse_tool_response(raw)
+        assert out == {"type": "text", "content": "Line 1\nLine 2\twith tab"}
+
+    def test_text_status_fallback_unwrap_on_bad_json(self):
+        # Even if the JSON is somehow malformed after content, the text envelope unwrap extracts content
+        raw = '{"status": "text", "content": "Unwrapped response content", "extra": broken_syntax}'
+        out = tools.parse_tool_response(raw)
+        assert out == {"type": "text", "content": "Unwrapped response content"}
 
     def test_empty_returns_text(self):
         assert tools.parse_tool_response("") == {"type": "text", "content": ""}
@@ -249,6 +261,7 @@ class TestBuildToolPrompt:
         assert "run" in out
         assert "tool_use" in out
         assert "User message: do it" in out
+        assert "taking actions" in out
 
     def test_tool_choice_required(self):
         out = tools.build_tool_prompt("x", [{"function": {"name": "a"}}], tool_choice="required")

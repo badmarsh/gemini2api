@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="zh-CN" id="html-root">
+<html lang="en" id="html-root">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <meta name="theme-color" content="#059669">
     <meta name="description" content="Gemini2API Management Console">
-    <title>Gemini2API - 管理控制台</title>
+    <title>Gemini2API - Admin Console</title>
     <link rel="icon" type="image/png" href="components/logo.png?v=1">
     <link rel="stylesheet" href="app/base.css?v=5">
     <link rel="stylesheet" href="app/mobile.css?v=3">
@@ -43,7 +43,7 @@
                 await initializeComponents();
             } catch (error) {
                 console.error('Failed to load components:', error);
-                document.body.innerHTML = '<div style="padding:2rem;text-align:center;"><h2>加载失败</h2><p>请刷新页面重试</p></div>';
+                document.body.innerHTML = '<div style="padding:2rem;text-align:center;"><h2>Loading Failed</h2><p>Please refresh the page to retry</p></div>';
             }
         })();
     </script>

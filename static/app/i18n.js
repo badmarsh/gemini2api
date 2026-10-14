@@ -1386,11 +1386,11 @@ const translations = {
 };
 
 const LANG_KEY = 'gemini2api_lang';
-let currentLang = localStorage.getItem(LANG_KEY) || 'zh-CN';
+let currentLang = localStorage.getItem(LANG_KEY) || 'en-US';
 
 export function t(key) {
-    const lang = translations[currentLang] || translations['zh-CN'];
-    return lang[key] || translations['zh-CN'][key] || key;
+    const lang = translations[currentLang] || translations['en-US'];
+    return lang[key] || translations['en-US'][key] || key;
 }
 
 export function setLanguage(lang) {

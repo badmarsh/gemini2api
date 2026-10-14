@@ -4,9 +4,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# 畸形工具调用 JSON 的降级提示。既是发给客户端的文案，也是 is_malformed_tool_result
-# 的判定依据——两者共用同一个常量，避免改文案时判定悄悄失效。
-MALFORMED_TOOL_NOTICE = "（模型返回的工具调用格式有误，已忽略。请重试或换用 gemini-flash。）"
+# Notice for malformed tool call JSON sent to clients and used by is_malformed_tool_result.
+MALFORMED_TOOL_NOTICE = "(The tool call format returned by the model was invalid and has been ignored. Please retry or switch to gemini-flash.)"
 
 
 # 明确的图像生成意图关键词。收窄到「确实在要图」的表达，避免误判
@@ -170,6 +169,12 @@ def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
     elif isinstance(tool_choice, dict):
         forced_name = tool_choice.get("function", {}).get("name", "")
         choice_instruction = f"You MUST use the tool: {forced_name}. "
+    else:
+        choice_instruction = (
+            "When the user request requires taking actions, inspecting files, executing commands, "
+            "or gathering information that can be obtained via tools, you MUST call the appropriate tool(s) "
+            "rather than replying with plain text or explanations alone. "
+        )
 
     system_block = (
         f"You have access to the following tools:\n{tools_text}\n\n"
@@ -251,35 +256,74 @@ def _normalize_tool_calls(tc) -> list | None:
         args = fn.get("arguments", {})
         if isinstance(args, str):
             try:
-                args = json.loads(args)
+                args = json.loads(args, strict=False)
             except Exception:
                 args = {"_raw": args}
         out.append({"name": name, "arguments": args if isinstance(args, dict) else {}})
     return out or None
 
 
+def _unwrap_text_status_envelope(text: str) -> dict | None:
+    """If the model wrapped its reply in a {"status": "text", "content": "..."} envelope
+    that failed strict json.loads (e.g. unescaped control characters or unescaped quotes),
+    extract and unwrap the content string so raw JSON envelopes do not leak to clients."""
+    s = text.strip()
+    if s.startswith("```"):
+        s = _strip_code_fence(s)
+
+    if not ('"status"' in s and '"text"' in s and '"content"' in s):
+        return None
+
+    # First attempt: match "content": "(...)" ending before next field or closing brace
+    m = re.search(
+        r'"content"\s*:\s*"(.*?)(?<!\\)(?:"\s*,\s*"[a-zA-Z0-9_]+"\s*:|"\s*\}\s*$)',
+        s,
+        re.DOTALL,
+    )
+    if m:
+        content = m.group(1).replace('\\"', '"').replace('\\\\', '\\')
+        return {"type": "text", "content": content}
+
+    # Second attempt: fallback to boundary search between "content": " and the final quote
+    m_start = re.search(r'"content"\s*:\s*"', s)
+    if not m_start:
+        return None
+    content_start = m_start.end()
+    last_brace = s.rfind("}")
+    if last_brace == -1:
+        last_brace = len(s)
+    content_end = s.rfind('"', 0, last_brace)
+    if content_end > content_start:
+        content = s[content_start:content_end]
+        content = content.replace('\\"', '"').replace('\\\\', '\\')
+        return {"type": "text", "content": content}
+    return None
+
+
 def _try_parse(text: str) -> dict | None:
     """尝试把一段文本解析成工具/文本结构，失败返回 None。"""
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(text, strict=False)
     except (json.JSONDecodeError, TypeError):
+        parsed = None
+
+    if isinstance(parsed, dict):
+        status = parsed.get("status", "")
+        # 有 tool_calls 即视为工具调用（容忍缺 status）
+        if "tool_calls" in parsed or status == "tool_use":
+            calls = _normalize_tool_calls(parsed.get("tool_calls"))
+            if calls:
+                return {"type": "tool_calls", "tool_calls": calls}
+        if status == "text" and "content" in parsed:
+            return {"type": "text", "content": parsed["content"]}
+        # 整段就是一个工具调用对象 {"name":...,"arguments":...}
+        if "name" in parsed and ("arguments" in parsed or "function" in parsed):
+            calls = _normalize_tool_calls(parsed)
+            if calls:
+                return {"type": "tool_calls", "tool_calls": calls}
         return None
-    if not isinstance(parsed, dict):
-        return None
-    status = parsed.get("status", "")
-    # 有 tool_calls 即视为工具调用（容忍缺 status）
-    if "tool_calls" in parsed or status == "tool_use":
-        calls = _normalize_tool_calls(parsed.get("tool_calls"))
-        if calls:
-            return {"type": "tool_calls", "tool_calls": calls}
-    if status == "text" and "content" in parsed:
-        return {"type": "text", "content": parsed["content"]}
-    # 整段就是一个工具调用对象 {"name":...,"arguments":...}
-    if "name" in parsed and ("arguments" in parsed or "function" in parsed):
-        calls = _normalize_tool_calls(parsed)
-        if calls:
-            return {"type": "tool_calls", "tool_calls": calls}
-    return None
+
+    return _unwrap_text_status_envelope(text)
 
 
 def parse_tool_response(text: str) -> dict:
@@ -312,6 +356,11 @@ def parse_tool_response(text: str) -> dict:
     if looks_like_tool:
         logger.warning(f"工具调用 JSON 解析失败，畸形片段不透传: {text[:120]!r}")
         return {"type": "text", "content": MALFORMED_TOOL_NOTICE}
+
+    # 5. 尝试提取 text 包装器内容，防止 {"status": "text", "content": ...} 裸泄露给客户端
+    envelope = _unwrap_text_status_envelope(text)
+    if envelope:
+        return envelope
 
     # 普通文本（非工具意图）原样返回
     return {"type": "text", "content": text}

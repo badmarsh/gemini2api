@@ -182,7 +182,7 @@ async function loadSystemInfo() {
     }
 }
 
-const QR_REMOTE_BASE = 'https://raw.githubusercontent.com/xwteam/gemini2api/main/api';
+const QR_REMOTE_BASE = '/api-assets';
 
 async function loadQrCards() {
     const container = document.getElementById('qrCardsContainer');
@@ -394,7 +394,7 @@ async function loadAccounts() {
             container.innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-users"></i>
-                    <p>暂无账号</p>
+                    <p>${t('accounts.noAccounts')}</p>
                     <button class="btn btn-primary" onclick="window.app.openAddAccountModal()">
                         <i class="fas fa-plus"></i> ${t('accounts.noAccounts')}
                     </button>
@@ -476,10 +476,10 @@ async function loadAccounts() {
 
 async function checkAccount(accountId) {
     try {
-        showToast(t('accounts.checking'), 'info');
+        showToast(t('accounts.checking') || 'Checking account...', 'info');
         const result = await apiCall('GET', `/admin/accounts/${accountId}/check`);
-        const msg = result.valid ? '账号有效' : '账号无效';
-        showToast(`${msg} | 模型: ${result.models_count || 0}`, result.valid ? 'success' : 'error');
+        const msg = result.valid ? (t('accounts.valid') || 'Account valid') : (t('accounts.invalid') || 'Account invalid');
+        showToast(`${msg} | Models: ${result.models_count || 0}`, result.valid ? 'success' : 'error');
         await loadAccounts();
         await loadDashboard();
     } catch (error) {
@@ -528,19 +528,19 @@ async function submitAddAccount() {
     const label = document.getElementById('add-label')?.value.trim() || '';
 
     if (!psid) {
-        showToast('请填写 __Secure-1PSID', 'warning');
+        showToast('Please enter __Secure-1PSID', 'warning');
         return;
     }
 
     try {
-        showToast(t('accounts.adding'), 'info');
+        showToast(t('accounts.adding') || 'Adding account...', 'info');
         await apiCall('POST', '/admin/accounts', { psid, psidts, label });
-        showToast(t('accounts.added'), 'success');
+        showToast(t('accounts.added') || 'Account added', 'success');
         closeAddAccountModal();
         await loadAccounts();
         await loadDashboard();
     } catch (error) {
-        showToast(`${t('accounts.addFailed')}: ${error.message}`, 'error');
+        showToast(`${t('accounts.addFailed') || 'Failed to add account'}: ${error.message}`, 'error');
     }
 }
 
@@ -554,7 +554,7 @@ function openUpdateCookieModal(accountId, label) {
     updateCookieAccountId = accountId;
     const modal = document.getElementById('updateCookieModal');
     const title = document.getElementById('updateCookieTitle');
-    if (title) title.textContent = `更新 Cookie - ${label || accountId}`;
+    if (title) title.textContent = `Update Cookie - ${label || accountId}`;
     if (modal) modal.classList.add('active');
 }
 
@@ -573,24 +573,24 @@ async function submitUpdateCookie() {
     const psidts = document.getElementById('update-psidts')?.value.trim() || '';
 
     if (!psid) {
-        showToast('请填写 __Secure-1PSID', 'warning');
+        showToast('Please enter __Secure-1PSID', 'warning');
         return;
     }
 
     if (!updateCookieAccountId) {
-        showToast('未选择账号', 'error');
+        showToast('No account selected', 'error');
         return;
     }
 
     try {
-        showToast('正在更新 Cookie...', 'info');
+        showToast('Updating Cookie...', 'info');
         await apiCall('PUT', `/admin/accounts/${updateCookieAccountId}/cookies`, { psid, psidts });
-        showToast('Cookie 更新成功', 'success');
+        showToast('Cookie updated successfully', 'success');
         closeUpdateCookieModal();
         await loadAccounts();
         await loadDashboard();
     } catch (error) {
-        showToast(`更新失败: ${error.message}`, 'error');
+        showToast(`Update failed: ${error.message}`, 'error');
     }
 }
 
@@ -1036,7 +1036,7 @@ function setText(id, text) {
 
 async function copyModel(model) {
     const ok = await copyToClipboard(model);
-    showToast(ok ? `已复制: ${model}` : '复制失败', ok ? 'success' : 'error');
+    showToast(ok ? `${t('toast.copied') || 'Copied'}: ${model}` : (t('toast.error') || 'Failed to copy'), ok ? 'success' : 'error');
 }
 
 // ============================================================================

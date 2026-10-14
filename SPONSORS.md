@@ -1,37 +1,37 @@
-# ☕ 赞赏 & 共享
+# ☕ Sponsorship & Community
 
-觉得有帮助？请作者喝杯咖啡，或加入微信交流群获取使用帮助。二维码见[仓库首页](README.md)顶部。
-
----
-
-## 💖 支持项目
-
-Gemini2API 是一个开源项目，主要由个人维护。如果这个项目对你有帮助，欢迎通过以下方式支持：
-
-- ⭐ 给项目点个 Star
-- 🔗 分享给有需要的朋友
-- 🐛 提交 Issue 反馈 bug 或建议
-- 🔧 提交 PR 贡献代码或文档
+Found this project helpful? Consider supporting development or joining the community. QR codes can be found at the top of the [README](README.md) or in the Admin Console.
 
 ---
 
-## 📢 交流群
+## 💖 Support the Project
 
-加入微信交流群获取使用帮助、分享经验、讨论新功能。扫描仓库首页顶部的二维码即可加入。
+Gemini2API is an open-source project actively maintained for the community. If you find this project valuable, you can support us in the following ways:
+
+- ⭐ Star the repository on GitHub
+- 🔗 Share it with friends and colleagues
+- 🐛 Submit Issues for bugs, feedback, or feature suggestions
+- 🔧 Submit Pull Requests to contribute code or documentation
 
 ---
 
-## 🤝 参与贡献
+## 📢 Community
 
-1. Fork 本仓库
-2. 创建分支 `git checkout -b feature/your-feature`
-3. 提交代码 `git commit -m "feat: add something"`
-4. 推送并创建 Pull Request
+Join our community group for setup assistance, troubleshooting, tips, and discussion of new features.
 
-**贡献方向：**
+---
 
-- 🔑 Cookie 长期保活方案（目前约 2 小时失效，欢迎有经验的开发者贡献思路）
-- 🌐 多语言翻译完善
-- 📱 移动端适配优化
-- 🧪 新模型兼容性测试
-- 📖 文档改进
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes (`git commit -m "feat: add something"`)
+4. Push to branch and open a Pull Request
+
+**Key Contribution Areas:**
+
+- 🔑 Long-term cookie session keepalive and rotation mechanisms
+- 🌐 Multi-language localization and translation refinements
+- 📱 Mobile responsive design improvements
+- 🧪 Testing compatibility with new Gemini models and reasoning protocols
+- 📖 Documentation, guides, and tutorials
