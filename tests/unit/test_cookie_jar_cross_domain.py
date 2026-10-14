@@ -55,6 +55,7 @@ def _cookies(*entries):
 @pytest.fixture
 def jar(tmp_path, monkeypatch):
     monkeypatch.setattr(cj_mod, "COOKIE_STORE_DIR", tmp_path / "cookies")
+    monkeypatch.setattr(cj_mod, "PERSISTED_COOKIE_NAMES", None)
     return PersistentCookieJar("acct-issue10")
 
 

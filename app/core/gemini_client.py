@@ -146,10 +146,10 @@ _PUBLIC_FAMILY = {
 # AI Pro：batchexecute 心跳返回 400 时 self._family_model 为空，兜底必须指向 Pro 档的
 # -advanced 内部模型，否则 pro/flash 会掉到免费档哈希（gemini-3-pro / -flash）。
 _FAMILY_DEFAULT = {
-    "pro": "gemini-3-pro-advanced",
-    "flash": "gemini-3-flash-advanced",
-    "flash-thinking": "gemini-3-flash-thinking-advanced",
-    "flash-lite": "gemini-3-flash-lite-advanced",
+    "pro": "gemini-3-pro",
+    "flash": "gemini-3-flash",
+    "flash-thinking": "gemini-3-flash-thinking",
+    "flash-lite": "gemini-3-flash-lite",
     "argon": "gemini-4-argon",
 }
 

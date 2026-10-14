@@ -20,7 +20,7 @@ COOKIE_STORE_DIR = Path("data/cookies")
 # 后挂起）。probe6/probe12 实证——只带 __Secure-1PSID + __Secure-1PSIDTS 就能正常生成。
 # PSIDTS 会轮换，必须保留；PSID 是长期凭据。注意 __Secure-1PSIDTS 的轮换值也在此白名单内，
 # 所以 _rotate_cookies 的持久化不受影响。
-PERSISTED_COOKIE_NAMES = {"__Secure-1PSID", "__Secure-1PSIDTS"}
+PERSISTED_COOKIE_NAMES: set[str] | None = {"__Secure-1PSID", "__Secure-1PSIDTS"}
 
 
 @dataclass
@@ -105,7 +105,7 @@ class PersistentCookieJar:
             return
         changed = False
         for name, value in self._iter_response_cookies(response.cookies):
-            if name not in PERSISTED_COOKIE_NAMES:
+            if PERSISTED_COOKIE_NAMES is not None and name not in PERSISTED_COOKIE_NAMES:
                 continue  # 只保留认证 Cookie；易变会话 Cookie 跨进程重放会导致 168 字节 stall
             with self._lock:
                 # 空值视为服务端删除指令：删除而非用空值覆盖有效凭据 Cookie。
@@ -140,7 +140,7 @@ class PersistentCookieJar:
                 parsed = self._parse_set_cookie_header(sc)
                 if parsed:
                     cn, cv, expires = parsed
-                    if cn not in PERSISTED_COOKIE_NAMES:
+                    if PERSISTED_COOKIE_NAMES is not None and cn not in PERSISTED_COOKIE_NAMES:
                         continue  # 同上：只保留认证 Cookie
                     with self._lock:
                         # 删除指令（空值 / Max-Age<=0 / Expires 已过期）：删除现有 Cookie，
@@ -275,7 +275,7 @@ class PersistentCookieJar:
             return
         for item in data:
             try:
-                if item.get("name") not in PERSISTED_COOKIE_NAMES:
+                if PERSISTED_COOKIE_NAMES is not None and item.get("name") not in PERSISTED_COOKIE_NAMES:
                     continue  # 旧 jar 里的易变会话 Cookie 不再回放（只恢复认证 Cookie）
                 self._cookies[item["name"]] = StoredCookie(
                     name=item["name"],
