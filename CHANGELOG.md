@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ---
 
+## [Unreleased]
+
+### Changed
+- Bump `fastapi` 0.120.4 -> 0.143.0 and `starlette` 0.49.1 -> 1.8.0 (pinned together; the Starlette >= 0.49.1 floor for CVE-2025-62727 is preserved). Full suite unchanged: 772 passed, 1 skipped. Adds `opentelemetry-api` as a transitive dependency of FastAPI.
+
+---
+
 ## [1.7.0] - 2026-10-14 (badmarsh/gemini2api v1.7)
 
 > Gemini 4 Argon Protocol Support, Autonomous Agent Hardening, Robust Simulated Tool Calling, and Default English Web Console.
