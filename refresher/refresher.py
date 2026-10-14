@@ -98,6 +98,10 @@ def refresh_account(browser, account):
         page.goto("https://gemini.google.com/app", timeout=90000, wait_until="domcontentloaded")
         time.sleep(15)
 
+        if "accounts.google.com" in page.url or "ServiceLogin" in page.url:
+            print(f"  [{label}] FAILED - Session expired, redirected to login ({page.url[:60]})")
+            return {"id": account_id, "label": label, "status": "expired", "updated_at": time.time()}
+
         cookies = context.cookies()
         psid = next((c["value"] for c in cookies if c["name"] == "__Secure-1PSID"), None)
         psidts = next((c["value"] for c in cookies if c["name"] == "__Secure-1PSIDTS"), None)
@@ -184,14 +188,16 @@ def refresh_all():
                 "--disable-setuid-sandbox",
                 "--disable-gpu",
                 "--disable-dev-shm-usage",
-                "--single-process",
-                "--no-zygote",
                 "--disable-extensions",
             ]
         )
 
         for i, account in enumerate(accounts):
-            result = refresh_account(browser, account)
+            try:
+                result = refresh_account(browser, account)
+            except Exception as e:
+                print(f"  [{account.get('label', account.get('id'))}] Unexpected error: {e}")
+                result = {"id": account["id"], "label": account.get("label", account["id"]), "status": "error", "error": str(e), "updated_at": time.time()}
             results.append(result)
             if i < len(accounts) - 1:
                 time.sleep(5)

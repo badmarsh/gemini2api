@@ -36,6 +36,11 @@ class HTTPStatusError(Exception):
 
 class GoogleWebError(RuntimeError):
     """Google web frontend returned an upstream error template rather than model output."""
+
+
+class RetriesExhaustedError(RuntimeError):
+    """generate() used up its same-account retries. A distinct type so failover can
+    recognise it without matching on the message text."""
     pass
 
 
@@ -47,6 +52,22 @@ GOOGLE_WEB_ERROR_PHRASES = (
     "I seem to be encountering an error. Can I try something else for you?",
     "I seem to be encountering an error",
 )
+
+# A reply is Google's error template only when it is one of those sentences on its own,
+# plus at most a short single-line tail such as an error code. A real answer that merely
+# begins with the same words (e.g. a user asking for sample error copy) is longer or
+# spans several lines.
+_ERROR_TEMPLATE_MAX_TAIL = 60
+
+
+def _is_google_error_reply(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not stripped or "\n" in stripped:
+        return False
+    for phrase in GOOGLE_WEB_ERROR_PHRASES:
+        if stripped.startswith(phrase):
+            return len(stripped) - len(phrase) <= _ERROR_TEMPLATE_MAX_TAIL
+    return False
 
 
 # account_pool.acquire() 抛出的三种"池打满/耗尽"RuntimeError 消息（均为动态拼接，故用子串匹配）。
@@ -437,6 +458,15 @@ def _rand_reqid() -> int:
 
 
 
+def _is_timeout_error(exc: Exception) -> bool:
+    """True for a request that hung: builtin/asyncio timeouts, or libcurl's
+    CURLE_OPERATION_TIMEDOUT (28), which curl_cffi surfaces as RequestsError.code.
+    Structured on purpose: no message substring matching."""
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    return getattr(exc, "code", 0) == 28
+
+
 class GeminiWebClient:
     def __init__(self, psid: str | None = None, psidts: str | None = None):
         self._psid = psid or settings.gemini_psid
@@ -460,6 +490,11 @@ class GeminiWebClient:
         self._refresh_task: asyncio.Task | None = None
         self._health_check_task: asyncio.Task | None = None
         self._http: AsyncSession | None = None
+        # In-flight users per shared session (id -> count), and ids of sessions swapped
+        # out while still in use. A retired session is closed by its last user, never
+        # under it (see _lease_http / _retire_http).
+        self._http_leases: dict[int, int] = {}
+        self._http_retired: set[int] = set()
         self._cookie_jar: PersistentCookieJar | None = None
         self._current_target: str = ""
         self._check_history: deque[dict] = deque(maxlen=20)
@@ -536,6 +571,39 @@ class GeminiWebClient:
     def check_history(self) -> list[dict]:
         return list(self._check_history)
 
+    def _lease_http(self):
+        """Pin the current shared session for one in-flight request."""
+        session = self._http
+        self._http_leases[id(session)] = self._http_leases.get(id(session), 0) + 1
+        return session
+
+    async def _release_http(self, session):
+        """Drop a lease; close the session if it was retired and this was its last user."""
+        key = id(session)
+        left = self._http_leases.get(key, 0) - 1
+        if left > 0:
+            self._http_leases[key] = left
+            return
+        self._http_leases.pop(key, None)
+        if key in self._http_retired:
+            self._http_retired.discard(key)
+            try:
+                await session.close()
+            except Exception:
+                pass
+
+    async def _retire_http(self, old):
+        """Close a swapped-out session now, or once its in-flight users are done."""
+        if old is None:
+            return
+        if self._http_leases.get(id(old)):
+            self._http_retired.add(id(old))
+            return
+        try:
+            await old.close()
+        except Exception:
+            pass
+
     async def _ensure_session_current(self):
         """检查 impersonate 目标是否需要更新（指纹轮换时换 session）。
 
@@ -554,11 +622,8 @@ class GeminiWebClient:
             old = self._http
             self._http = AsyncSession(impersonate=target, timeout=180)
             self._current_target = target
-            if old is not None:
-                try:
-                    await old.close()
-                except Exception:
-                    pass
+            # Streams in flight keep a lease on old; the last one closes it.
+            await self._retire_http(old)
 
     def _get_cookies(self) -> dict[str, str]:
         return self._cookie_jar.get_all()
@@ -1254,6 +1319,10 @@ class GeminiWebClient:
                 await asyncio.sleep(wait)
             except Exception as e:
                 last_err = e
+                # A hung request means this account's web session is stuck; retrying it
+                # only burns another full timeout. Raise so the pool fails over at once.
+                if _is_timeout_error(e):
+                    raise
                 # 最后一次尝试失败后不再有重试，跳过退避空耗，立即抛错让上层 failover
                 if attempt >= settings.max_retries - 1:
                     break
@@ -1261,7 +1330,7 @@ class GeminiWebClient:
                 logger.warning(f"Attempt {attempt+1}: {e}, wait {wait}s")
                 await asyncio.sleep(wait)
 
-        raise RuntimeError(f"Exhausted {settings.max_retries} retries: {last_err}")
+        raise RetriesExhaustedError(f"Exhausted {settings.max_retries} retries: {last_err}")
 
     async def generate_stream(self, prompt: str, model: str, conversation_id: str = "",
                               attachments: list | None = None, gem_id: str | None = None,
@@ -1335,7 +1404,7 @@ class GeminiWebClient:
         # connection. Mint once per account, never per request — re-fetching
         # /app on every turn churns web sessions and trips Google's
         # RotateCookies HFCR limit (identity.hfcr 600).
-        session = self._http
+        session = self._lease_http()
         try:
             async with session.stream(
                 "POST", GENERATE_URL,
@@ -1384,7 +1453,7 @@ class GeminiWebClient:
                                 last_images = imgs
                             if text is None:
                                 continue
-                            if not emitted and any(text.strip().startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES):
+                            if not emitted and _is_google_error_reply(text):
                                 raise GoogleWebError(f"Google web error: {text.strip()}")
                             # last_text 始终存原始累积文本，供收尾 _finalize_stream 统一过滤占位串。
                             last_text = text
@@ -1411,8 +1480,9 @@ class GeminiWebClient:
                     except Exception:
                         pass
         finally:
-            # self._http is the shared long-lived session — never close it here.
-            pass
+            # Never close the session here: it is shared. Drop our lease; if a reload
+            # retired it meanwhile, being its last user closes it.
+            await self._release_http(session)
 
         yield await self._finalize_stream(last_text, last_conv, last_images, last_thoughts)
 
@@ -1446,7 +1516,7 @@ class GeminiWebClient:
             # 生图时模型文本里的占位 URL 无意义，过滤掉（与 _parse_output 一致）
             text = _IMAGE_GEN_PLACEHOLDER_RE.sub("", text).strip()
         stripped = text.strip()
-        if stripped and any(stripped.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES):
+        if stripped and _is_google_error_reply(stripped):
             raise GoogleWebError(f"Google web error: {stripped}")
         return {
             "type": "final",
@@ -1645,7 +1715,7 @@ class GeminiWebClient:
                 text_content = "（没有生成图片。试试更明确的生成指令，如「画一张…」「生成一张…的图片」。）"
 
         stripped = text_content.strip()
-        if stripped and any(stripped.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES):
+        if stripped and _is_google_error_reply(stripped):
             raise GoogleWebError(f"Google web error: {stripped}")
 
         return {"text": text_content, "conversation_id": conv_id, "images": images, "thoughts": thoughts_content}
@@ -1746,9 +1816,10 @@ class GeminiWebClient:
 
         try:
             # Recreate HTTP session to avoid accumulated cookie conflicts
-            if self._http:
-                await self._http.close()
+            old_http = self._http
             self._http = AsyncSession(impersonate=self._current_target, timeout=180)
+            # Streams already running hold a lease on old_http; the last one closes it.
+            await self._retire_http(old_http)
 
             self._cookie_jar.set("__Secure-1PSID", self._psid)
             if self._psidts:

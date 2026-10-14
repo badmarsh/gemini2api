@@ -232,7 +232,7 @@ async def restart_server(confirm: bool = False):
     if not confirm:
         return JSONResponse(
             status_code=400,
-            content={"error": {"message": "重启需二次确认，请带查询参数 ?confirm=true", "type": "confirmation_required"}},
+            content={"error": {"message": "Restart requires secondary confirmation, please supply query param ?confirm=true", "type": "confirmation_required"}},
         )
     import threading
     import signal
@@ -315,10 +315,10 @@ async def cleanup_web_chats(req: CleanupWebChatsRequest = None):
                 keep_hours=req.keep_hours, skip_pinned=req.skip_pinned
             )
         except Exception as e:
-            logger.warning(f"[cleanup-web-chats] 后台清理异常: {e}")
+            logger.warning(f"[cleanup-web-chats] Background cleanup error: {e}")
 
     task = asyncio.create_task(_run())
     _cleanup_bg_tasks.add(task)
     task.add_done_callback(_cleanup_bg_tasks.discard)
-    return {"status": "started", "message": "清理已在后台开始，结果见服务端日志"}
+    return {"status": "started", "message": "Cleanup started in background; check server logs for results"}
 

@@ -7,7 +7,10 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from app.core.gemini_client import GeminiWebClient, HTTPStatusError, NO_HEALTHY_ACCOUNT_MSG, GoogleWebError
+from app.core.gemini_client import (
+    GeminiWebClient, HTTPStatusError, NO_HEALTHY_ACCOUNT_MSG, GoogleWebError,
+    RetriesExhaustedError, _is_timeout_error,
+)
 from app.core.fallback import is_empty_result
 from app.config import settings
 from app.core.usage_metrics import live_metrics
@@ -35,12 +38,6 @@ def _is_5xx(exc: Exception) -> bool:
     return isinstance(exc, HTTPStatusError) and 500 <= exc.status_code < 600
 
 
-_STALL_HINTS = (
-    "operation timed out", "timed out", "timeout",
-    "failed to generate", "exhausted",
-)
-
-
 def _is_stall(exc: Exception) -> bool:
     """请求挂死 / 同账号重试耗尽。
 
@@ -52,10 +49,9 @@ def _is_stall(exc: Exception) -> bool:
     该账号的 web 会话已卡住，同账号重试毫无意义 —— 冷却它并立刻换下一个 warm 账号
     （2026-10-14：3.1 Pro 那次调用就是这样卡了 3 分钟）。
     """
-    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
-        return True
-    msg = str(exc).lower()
-    return any(h in msg for h in _STALL_HINTS)
+    # Match on type/code only. Free-text matching on str(exc) also hit upstream response
+    # bodies embedded in HTTPStatusError messages and misclassified ordinary 4xx errors.
+    return _is_timeout_error(exc) or isinstance(exc, RetriesExhaustedError)
 
 
 def _is_retryable(exc: Exception) -> bool:
