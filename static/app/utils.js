@@ -5,16 +5,23 @@
 import { getCurrentLanguage, t } from './i18n.js';
 
 /**
- * Mask sensitive string
- * @param {string} str - Original string
- * @param {number} showChars - Number of characters to show
+ * Cryptographic boundary masking: Strictly exposes first 6 and last 4 characters.
+ * Short keys (<= 8 chars) are fully masked (******) to prevent boundary recovery.
+ * @param {string} str - Original credential string
+ * @param {number} prefixLen - Leading characters (default: 6)
+ * @param {number} suffixLen - Trailing characters (default: 4)
  * @returns {string}
  */
-function maskString(str, showChars = 10) {
+function maskString(str, prefixLen = 6, suffixLen = 4) {
     if (!str) return '';
-    if (str.length <= showChars) return str;
-    return str.substring(0, showChars) + '...';
+    const s = String(str).trim();
+    if (s.length <= 8) return '******';
+    if (s.length <= prefixLen + suffixLen) {
+        return `${s.substring(0, 2)}...${s.substring(s.length - 2)}`;
+    }
+    return `${s.substring(0, prefixLen)}...${s.substring(s.length - suffixLen)}`;
 }
+
 
 /**
  * Format number with locale
@@ -279,6 +286,7 @@ function showConfirm({ title = 'Confirm Action', message = '', confirmText = 'Co
 // Export functions
 export {
     maskString,
+    maskString as maskCredential,
     formatNumber,
     getStatusBadge,
     formatDate,

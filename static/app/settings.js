@@ -1,6 +1,7 @@
 import { apiCall } from './auth.js';
 import { showToast, escapeHtml } from './utils.js';
 import { t } from './i18n.js';
+import { validateSettingsPayload } from './services/validationService.js';
 
 let originalSettings = {};
 let modelMappings = {};
@@ -313,7 +314,7 @@ function flattenSettings(settings) {
 export async function loadSettings() {
   try {
     const data = await apiCall('GET', '/admin/settings');
-    originalSettings = flattenSettings(data);
+    originalSettings = Object.freeze(flattenSettings(data));
     renderSettings(data);
     await loadModelMapping();
   } catch (error) {
@@ -337,6 +338,7 @@ async function saveSettings() {
   }
 
   try {
+    validateSettingsPayload({ settings: apiSettings });
     await apiCall('POST', '/admin/settings', { settings: apiSettings });
     showToast(t('settings.saved'), 'success');
     await loadSettings();

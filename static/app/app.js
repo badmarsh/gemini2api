@@ -13,6 +13,11 @@ import { initApiKeys, loadApiKeys } from './api-keys.js';
 import { initGems, loadAccountsThenGems } from './gems.js';
 import { initI18n, t } from './i18n.js';
 import { initLanguageSwitcher } from './language-switcher.js';
+import { APP_CONSTANTS } from './config/constants.js';
+import { safeStorage } from './services/storageService.js';
+import { validateAccountPayload } from './services/validationService.js';
+import { accountService } from './services/accountService.js';
+import { telemetryService } from './services/telemetryService.js';
 
 let isAppInitialized = false;
 
@@ -69,7 +74,36 @@ function activateSection(sectionId, updateHash = true) {
     window.scrollTo(0, 0);
 }
 
+function renderSectionErrorBoundary(sectionId, error) {
+    const sectionEl = document.getElementById(sectionId);
+    if (!sectionEl) return;
+    sectionEl.querySelectorAll('.section-error-boundary-banner').forEach(el => el.remove());
+
+    const banner = document.createElement('div');
+    banner.className = 'section-error-boundary-banner';
+    banner.style.cssText = 'padding: 2rem; margin: 1.5rem 0; border-radius: 12px; background: rgba(239, 68, 68, 0.08); border: 1px solid var(--danger-color, #ef4444); color: var(--text-primary); text-align: center;';
+    banner.innerHTML = `
+        <i class="fas fa-exclamation-triangle" style="color: var(--danger-color, #ef4444); font-size: 2rem; margin-bottom: 0.75rem;" aria-hidden="true"></i>
+        <h3 style="margin: 0.25rem 0 0.5rem; font-size: 1.125rem;">Section Failed to Load (${escapeHtml(sectionId)})</h3>
+        <p style="font-size: 0.875rem; color: var(--text-secondary); margin: 0 0 1.25rem; max-width: 450px; display: inline-block;">${escapeHtml(error.message || 'An unexpected error occurred while loading this section. Other sections remain fully operational.')}</p>
+        <div>
+            <button class="btn btn-sm btn-primary retry-btn">
+                <i class="fas fa-redo"></i> Retry Section
+            </button>
+        </div>
+    `;
+    banner.querySelector('.retry-btn')?.addEventListener('click', () => {
+        banner.remove();
+        loadSectionData(sectionId);
+    });
+    sectionEl.prepend(banner);
+}
+
 async function loadSectionData(sectionId) {
+    const sectionEl = document.getElementById(sectionId);
+    if (sectionEl) {
+        sectionEl.querySelectorAll('.section-error-boundary-banner').forEach(el => el.remove());
+    }
     try {
         switch (sectionId) {
             case 'dashboard':
@@ -94,7 +128,7 @@ async function loadSectionData(sectionId) {
                 break;
         }
     } catch (error) {
-        console.error(`Failed to load ${sectionId} data:`, error);
+        renderSectionErrorBoundary(sectionId, error);
     }
 }
 
@@ -103,45 +137,41 @@ async function loadSectionData(sectionId) {
 // ============================================================================
 
 async function loadDashboard() {
-    try {
-        const data = await apiCall('GET', '/admin/status');
-        const accounts = data.accounts || [];
+    const data = await telemetryService.getAdminStatus();
+    const accounts = data.accounts || [];
 
-        const activeCount = accounts.filter(a => a.status === 'active').length;
-        const totalRequests = accounts.reduce((sum, a) => sum + (a.request_count || 0), 0);
-        const modelsSet = new Set();
-        accounts.forEach(a => {
-            if (a.models && Array.isArray(a.models)) {
-                a.models.forEach(m => modelsSet.add(m));
-            }
-        });
-
-        setText('stat-total', formatNumber(accounts.length));
-        setText('stat-active', formatNumber(activeCount));
-        setText('stat-requests', formatNumber(totalRequests));
-        setText('stat-models', formatNumber(modelsSet.size || accounts.reduce((s, a) => s + (a.models_count || 0), 0)));
-
-        const strategyMap = { 'round-robin': t('settings.strategy.roundRobin'), 'least-used': t('settings.strategy.leastUsed'), 'failover': t('settings.strategy.failover') };
-        setText('info-strategy', strategyMap[data.strategy] || data.strategy);
-        setText('info-concurrent', data.max_concurrent_per_account || '-');
-        setText('info-total-accounts', accounts.length);
-        setText('info-active-accounts', activeCount);
-
-        renderAccountStatusGrid(accounts);
-        renderModelsList(modelsSet);
-        updatePlaygroundModels(modelsSet);
-        await loadSystemInfo();
-        await loadQrCards();
-
-        // Bind and auto-check update button (must be after DOM is loaded)
-        const updateBtn = document.getElementById('checkUpdateBtn');
-        if (updateBtn && !updateBtn._bound) {
-            updateBtn._bound = true;
-            updateBtn.addEventListener('click', handleCheckUpdate);
-            checkForUpdate();
+    const activeCount = accounts.filter(a => a.status === 'active').length;
+    const totalRequests = accounts.reduce((sum, a) => sum + (a.request_count || 0), 0);
+    const modelsSet = new Set();
+    accounts.forEach(a => {
+        if (a.models && Array.isArray(a.models)) {
+            a.models.forEach(m => modelsSet.add(m));
         }
-    } catch (error) {
-        console.error('Failed to load dashboard:', error);
+    });
+
+    setText('stat-total', formatNumber(accounts.length));
+    setText('stat-active', formatNumber(activeCount));
+    setText('stat-requests', formatNumber(totalRequests));
+    setText('stat-models', formatNumber(modelsSet.size || accounts.reduce((s, a) => s + (a.models_count || 0), 0)));
+
+    const strategyMap = { 'round-robin': t('settings.strategy.roundRobin'), 'least-used': t('settings.strategy.leastUsed'), 'failover': t('settings.strategy.failover') };
+    setText('info-strategy', strategyMap[data.strategy] || data.strategy);
+    setText('info-concurrent', data.max_concurrent_per_account || '-');
+    setText('info-total-accounts', accounts.length);
+    setText('info-active-accounts', activeCount);
+
+    renderAccountStatusGrid(accounts);
+    renderModelsList(modelsSet);
+    updatePlaygroundModels(modelsSet);
+    await loadSystemInfo();
+    await loadQrCards();
+
+    // Bind and auto-check update button (must be after DOM is loaded)
+    const updateBtn = document.getElementById('checkUpdateBtn');
+    if (updateBtn && !updateBtn._bound) {
+        updateBtn._bound = true;
+        updateBtn.addEventListener('click', handleCheckUpdate);
+        checkForUpdate();
     }
 }
 
@@ -163,22 +193,18 @@ function startUptimeTimer(initialSeconds) {
 }
 
 async function loadSystemInfo() {
-    try {
-        const data = await apiCall('GET', '/admin/system-info');
-        setText('sys-version', 'v' + data.version);
-        setText('sys-ver-detail', 'v' + data.version);
-        setText('sys-python', data.python_version);
-        setText('sys-time', data.server_time);
-        setText('sys-os', data.os);
-        setText('sys-memory', data.memory_usage + ' MB / ' + data.memory_total + ' MB');
-        setText('sys-cpu', data.cpu_percent + '%');
-        setText('sys-mode', data.run_mode);
-        setText('sys-pid', data.pid);
-        if (data.uptime_seconds !== undefined) {
-            startUptimeTimer(data.uptime_seconds);
-        }
-    } catch (error) {
-        console.error('Failed to load system info:', error);
+    const data = await telemetryService.getSystemInfo();
+    setText('sys-version', 'v' + data.version);
+    setText('sys-ver-detail', 'v' + data.version);
+    setText('sys-python', data.python_version);
+    setText('sys-time', data.server_time);
+    setText('sys-os', data.os);
+    setText('sys-memory', data.memory_usage + ' MB / ' + data.memory_total + ' MB');
+    setText('sys-cpu', data.cpu_percent + '%');
+    setText('sys-mode', data.run_mode);
+    setText('sys-pid', data.pid);
+    if (data.uptime_seconds !== undefined) {
+        startUptimeTimer(data.uptime_seconds);
     }
 }
 
@@ -376,7 +402,9 @@ function updatePlaygroundModels(modelsSet) {
 
 async function loadAccounts() {
     try {
-        const data = await apiCall('GET', '/admin/accounts');
+        const data = (typeof accountService !== 'undefined' && accountService.listAccounts)
+            ? await accountService.listAccounts()
+            : await apiCall('GET', '/admin/accounts');
         const accounts = data.accounts || [];
 
         const container = document.getElementById('accountsList');
@@ -410,7 +438,7 @@ async function loadAccounts() {
                 </div>
                 <div class="account-detail">
                     <span class="label">PSID</span>
-                    <span class="value">${escapeHtml(maskString(account.psid || '', 12))}</span>
+                    <span class="value">${escapeHtml(maskString(account.psid || '', 6, 4))}</span>
                 </div>
                 <div class="account-detail">
                     <span class="label">${t('accounts.requests')}</span>
@@ -428,7 +456,7 @@ async function loadAccounts() {
                     <span class="label">${t('accounts.lastSuccess')}</span>
                     <span class="value">${escapeHtml(formatDate(account.last_success_at))}</span>
                 </div>
-    ${_accountHealthRow(account)}${_accountEmptyRow(account)}
+${_accountHealthRow(account)}${_accountEmptyRow(account)}
                 ${account.last_error ? `
                 <div class="account-detail">
                     <span class="label">${t('accounts.lastError')}</span>
@@ -467,7 +495,7 @@ async function loadAccounts() {
 async function checkAccount(accountId) {
     try {
         showToast(t('accounts.checking') || 'Checking account...', 'info');
-        const result = await apiCall('GET', `/admin/accounts/${accountId}/check`);
+        const result = await accountService.checkAccount(accountId);
         const msg = result.valid ? (t('accounts.valid') || 'Account valid') : (t('accounts.invalid') || 'Account invalid');
         showToast(`${msg} | Models: ${result.models_count || 0}`, result.valid ? 'success' : 'error');
         await loadAccounts();
@@ -489,7 +517,7 @@ async function removeAccount(accountId) {
 
     try {
         showToast(t('accounts.deleting'), 'info');
-        await apiCall('DELETE', `/admin/accounts/${accountId}`);
+        await accountService.removeAccount(accountId);
         showToast(t('accounts.deleted'), 'success');
         await loadAccounts();
         await loadDashboard();
@@ -517,14 +545,9 @@ async function submitAddAccount() {
     const psidts = document.getElementById('add-psidts')?.value.trim() || '';
     const label = document.getElementById('add-label')?.value.trim() || '';
 
-    if (!psid) {
-        showToast('Please enter __Secure-1PSID', 'warning');
-        return;
-    }
-
     try {
         showToast(t('accounts.adding') || 'Adding account...', 'info');
-        await apiCall('POST', '/admin/accounts', { psid, psidts, label });
+        await accountService.addAccount({ psid, psidts, label });
         showToast(t('accounts.added') || 'Account added', 'success');
         closeAddAccountModal();
         await loadAccounts();
@@ -562,11 +585,6 @@ async function submitUpdateCookie() {
     const psid = document.getElementById('update-psid')?.value.trim();
     const psidts = document.getElementById('update-psidts')?.value.trim() || '';
 
-    if (!psid) {
-        showToast('Please enter __Secure-1PSID', 'warning');
-        return;
-    }
-
     if (!updateCookieAccountId) {
         showToast('No account selected', 'error');
         return;
@@ -574,7 +592,7 @@ async function submitUpdateCookie() {
 
     try {
         showToast('Updating Cookie...', 'info');
-        await apiCall('PUT', `/admin/accounts/${updateCookieAccountId}/cookies`, { psid, psidts });
+        await accountService.updateAccountCookies(updateCookieAccountId, { psid, psidts });
         showToast('Cookie updated successfully', 'success');
         closeUpdateCookieModal();
         await loadAccounts();
@@ -733,6 +751,8 @@ function _pgSetSendBusy(busy) {
     else pgSend.removeAttribute('aria-busy');
 }
 
+let _pgAbortController = null;
+
 async function sendPlaygroundRequest() {
     const pgSend = document.getElementById('pg-send');
     if (pgSend?.disabled) return;
@@ -745,6 +765,13 @@ async function sendPlaygroundRequest() {
         showToast(t('playground.emptyMessage'), 'warning');
         return;
     }
+
+    // Cancel any previous stream
+    if (_pgAbortController) {
+        _pgAbortController.abort();
+        _pgAbortController = null;
+    }
+    _pgAbortController = new AbortController();
 
     const placeholder = chatContainer?.querySelector('.chat-placeholder');
     if (placeholder) placeholder.remove();
@@ -763,6 +790,10 @@ async function sendPlaygroundRequest() {
         userContent = message;
     }
     _pgMessages.push({ role: 'user', content: userContent });
+    // Enforce ring-buffer bounds (FIFO eviction on client heap)
+    while (_pgMessages.length > APP_CONSTANTS.LIMITS.MAX_RING_BUFFER_MESSAGES) {
+        _pgMessages.shift();
+    }
 
     const imgHtml = _pgImages.map(img => `<img src="${img.dataUrl}" class="chat-img" alt="${escapeHtml(img.name)}">`).join('');
     const userMsg = document.createElement('div');
@@ -781,6 +812,11 @@ async function sendPlaygroundRequest() {
     `;
     chatContainer.appendChild(aiMsg);
     const aiBubble = aiMsg.querySelector('.chat-bubble');
+
+    // Enforce DOM node bounds (FIFO eviction)
+    while (chatContainer.children.length > APP_CONSTANTS.LIMITS.MAX_RING_BUFFER_MESSAGES) {
+        chatContainer.removeChild(chatContainer.firstElementChild);
+    }
     chatContainer.scrollTop = chatContainer.scrollHeight;
 
     if (isImageGen) {
@@ -792,9 +828,9 @@ async function sendPlaygroundRequest() {
     _renderPgImagePreview();
     _pgSetSendBusy(true);
 
-    const token = localStorage.getItem('gemini2api_token');
+    const token = safeStorage.getSecureItem(APP_CONSTANTS.STORAGE_KEYS.TOKEN);
     const reqBody = {
-        model: model || 'gemini-3-flash',
+        model: model || APP_CONSTANTS.DEFAULT_MODELS.FALLBACK_MODEL,
         messages: [..._pgMessages],
         stream: true
     };
@@ -805,15 +841,24 @@ async function sendPlaygroundRequest() {
         reqBody.reasoning_effort = 'high';
     }
 
+    const streamTimeoutId = setTimeout(() => {
+        if (_pgAbortController) {
+            _pgAbortController.abort(new Error(`Stream timed out after ${APP_CONSTANTS.TIMEOUTS.STREAM_DEFAULT / 1000}s`));
+        }
+    }, APP_CONSTANTS.TIMEOUTS.STREAM_DEFAULT);
+
     try {
-        const resp = await fetch('/openai/v1/chat/completions', {
+        const resp = await fetch(APP_CONSTANTS.ROUTES.CHAT_COMPLETIONS, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify(reqBody)
+            body: JSON.stringify(reqBody),
+            signal: _pgAbortController.signal
         });
+
+        clearTimeout(streamTimeoutId);
 
         if (!resp.ok) {
             _pgMessages.pop();
@@ -868,7 +913,7 @@ async function sendPlaygroundRequest() {
                     const chunk = JSON.parse(data);
                     const info = _pgClassifyChunk(chunk);
                     if (info.kind === 'error') {
-// Record error without breaking loop: error frames are followed by [DONE], finalized on completion so streamed content is preserved.
+                        // Record error without breaking loop: error frames are followed by [DONE], finalized on completion
                         streamError = info;
                         continue;
                     }
@@ -897,29 +942,36 @@ async function sendPlaygroundRequest() {
         const outcome = _pgStreamOutcome(content, streamError);
         _pgClearGeneratingState(aiMsg, aiBubble);
         if (outcome.mode === 'error') {
-// No content received: remove unresponded user turn to avoid orphan messages.
             _pgMessages.pop();
             aiBubble.textContent = '';
             aiBubble.appendChild(_pgErrorSpan(outcome.errorText));
         } else if (outcome.mode === 'partial-error') {
-            // Render received content and append error, never discarding already received text
             aiBubble.innerHTML = _pgRenderContent(outcome.content);
             aiBubble.appendChild(document.createElement('br'));
             aiBubble.appendChild(_pgErrorSpan(outcome.errorText));
             chatContainer.scrollTop = chatContainer.scrollHeight;
             _pgMessages.push({ role: 'assistant', content: outcome.content });
+            while (_pgMessages.length > (typeof APP_CONSTANTS !== 'undefined' ? APP_CONSTANTS.LIMITS.MAX_RING_BUFFER_MESSAGES : 200)) {
+                _pgMessages.shift();
+            }
         } else if (outcome.mode === 'empty') {
             aiBubble.textContent = t('playground.noContent');
         } else {
             aiBubble.innerHTML = _pgRenderContent(outcome.content);
             chatContainer.scrollTop = chatContainer.scrollHeight;
             _pgMessages.push({ role: 'assistant', content: outcome.content });
+            while (_pgMessages.length > (typeof APP_CONSTANTS !== 'undefined' ? APP_CONSTANTS.LIMITS.MAX_RING_BUFFER_MESSAGES : 200)) {
+                _pgMessages.shift();
+            }
         }
     } catch (error) {
+        clearTimeout(streamTimeoutId);
         _pgMessages.pop();
         _pgClearGeneratingState(aiMsg, aiBubble);
         aiBubble.innerHTML = `<span class="text-danger">${escapeHtml(_pgFormatPlaygroundError(error))}</span>`;
     } finally {
+        clearTimeout(streamTimeoutId);
+        _pgAbortController = null;
         _pgSetSendBusy(false);
     }
 }
@@ -968,6 +1020,10 @@ function _pgRenderContent(text) {
 }
 
 function clearPlayground() {
+    if (_pgAbortController) {
+        _pgAbortController.abort();
+        _pgAbortController = null;
+    }
     const chatContainer = document.getElementById('pg-chat');
     if (chatContainer) {
         chatContainer.innerHTML = `<div class="chat-placeholder"><i class="fas fa-comment-dots"></i><p>${escapeHtml(t('playground.startChat'))}</p></div>`;
@@ -1306,8 +1362,6 @@ async function initApp() {
     initApiKeys();
     initGems();
     initLightbox();
-
-    console.log('Gemini2API admin console loaded');
 }
 
 // Expose functions for onclick handlers
@@ -1327,6 +1381,9 @@ window.app = {
         if (activeSection) {
             loadSectionData(activeSection.id);
         }
+    },
+    retrySectionLoad(sectionId) {
+        loadSectionData(sectionId);
     }
 };
 

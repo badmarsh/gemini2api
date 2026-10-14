@@ -1,18 +1,26 @@
 /**
  * Structured Logs - REST polling, table rendering, filtering, pagination
+ * Hardened with FIFO ring buffer guardrail (max 200 items), circuit breaker, and AbortControllers.
  */
 
 import { apiCall } from './auth.js';
 import { escapeHtml } from './utils.js';
+import { APP_CONSTANTS } from './config/constants.js';
+import { RingBuffer } from './services/telemetryService.js';
 
 let pollTimer = null;
 let currentDirection = 'all';
 let currentSearch = '';
 let currentOffset = 0;
-const PAGE_SIZE = 15;
-const POLL_INTERVAL = 1500;
+const PAGE_SIZE = APP_CONSTANTS.LIMITS.PAGE_SIZE_LOGS;
+const POLL_INTERVAL = APP_CONSTANTS.TIMEOUTS.POLL_LOGS;
 let isPaused = false;
 let selectedRecordId = null;
+
+// Ring buffer guardrail: strictly bounds client-side heap to max 200 records
+const clientLogBuffer = new RingBuffer(APP_CONSTANTS.LIMITS.MAX_RING_BUFFER_LOGS);
+let inFlightController = null;
+let consecutiveErrors = 0;
 
 export function initLogs() {
     initLogControls();
@@ -82,7 +90,9 @@ function initLogControls() {
 function startPolling() {
     stopPolling();
     pollTimer = setInterval(() => {
-        if (!isPaused && document.visibilityState === 'visible') {
+        const logsSection = document.getElementById('logs');
+        const isSectionActive = logsSection ? logsSection.classList.contains('active') : true;
+        if (!isPaused && document.visibilityState === 'visible' && isSectionActive && consecutiveErrors < 5) {
             loadLogs();
         }
     }, POLL_INTERVAL);
@@ -93,10 +103,17 @@ function stopPolling() {
         clearInterval(pollTimer);
         pollTimer = null;
     }
+    if (inFlightController) {
+        inFlightController.abort();
+        inFlightController = null;
+    }
 }
 
 function togglePause() {
     isPaused = !isPaused;
+    if (!isPaused) {
+        consecutiveErrors = 0; // Reset circuit breaker
+    }
     const btn = document.getElementById('log-toggle-btn');
     if (btn) {
         const icon = btn.querySelector('i');
@@ -109,27 +126,47 @@ function togglePause() {
 async function clearLogs() {
     try {
         await apiCall('POST', '/admin/logs/clear');
+        clientLogBuffer.clear();
         loadLogs();
-    } catch (e) {
-        console.error('Clear logs failed:', e);
+    } catch (_) {
+        // Silently handled without leaking raw traces
     }
 }
 
 async function loadLogs() {
+    // Abort any prior in-flight fetch
+    if (inFlightController) {
+        inFlightController.abort();
+    }
+    inFlightController = new AbortController();
+
     try {
-        let url = '/admin/logs?limit=' + PAGE_SIZE + '&offset=' + currentOffset;
+        let url = `${APP_CONSTANTS.ROUTES.ADMIN_LOGS}?limit=${PAGE_SIZE}&offset=${currentOffset}`;
         if (currentDirection !== 'all') {
-            url += '&direction=' + currentDirection;
+            url += '&direction=' + encodeURIComponent(currentDirection);
         }
         if (currentSearch) {
             url += '&search=' + encodeURIComponent(currentSearch);
         }
 
-        const data = await apiCall('GET', url);
-        renderTable(data.records || []);
+        const data = await apiCall('GET', url, null, {
+            signal: inFlightController.signal,
+            timeout: APP_CONSTANTS.TIMEOUTS.API_DEFAULT
+        });
+
+        consecutiveErrors = 0;
+
+        const records = data.records || [];
+        clientLogBuffer.pushMany(records);
+
+        renderTable(records);
         renderPagination(data.total || 0, data.offset || 0);
     } catch (e) {
-        console.error('Load logs failed:', e);
+        if (e.name !== 'AbortError') {
+            consecutiveErrors++;
+        }
+    } finally {
+        inFlightController = null;
     }
 }
 
@@ -155,8 +192,6 @@ function renderTable(records) {
         const latency = r.latency_ms ? Math.round(r.latency_ms) + 'ms' : '-';
         const selected = r.id === selectedRecordId ? ' selected' : '';
 
-        // Security: r.path/r.method/r.model come from HTTP requests (user-controlled);
-        // escape before rendering to prevent stored XSS (e.g. <svg onload=...> in path).
         return '<tr class="log-row' + selected + '" data-id="' + escapeHtml(String(r.id ?? '')) + '">'
             + '<td>' + escapeHtml(time) + '</td>'
             + '<td><span class="badge ' + dirClass + '">' + escapeHtml(dirLabel) + '</span></td>'
@@ -212,18 +247,44 @@ async function selectRecord(id) {
     });
 
     try {
-        const record = await apiCall('GET', '/admin/logs/' + id);
+        const record = await apiCall('GET', '/admin/logs/' + encodeURIComponent(id), null, {
+            timeout: APP_CONSTANTS.TIMEOUTS.API_DEFAULT
+        });
         showDetail(record);
-    } catch (e) {
-        console.error('Load record detail failed:', e);
+    } catch (_) {
+        // Handled silently
     }
+}
+
+/**
+ * Sanitize sensitive fields before rendering raw JSON in detail pane
+ */
+function sanitizeRecordForDisplay(rec) {
+    if (!rec || typeof rec !== 'object') return rec;
+    const clone = JSON.parse(JSON.stringify(rec));
+    const maskKey = (obj, key) => {
+        if (obj && typeof obj[key] === 'string' && obj[key].length > 10) {
+            obj[key] = obj[key].slice(0, 6) + '...' + obj[key].slice(-4);
+        }
+    };
+
+    if (clone.headers) {
+        ['authorization', 'cookie', 'x-api-key'].forEach(k => {
+            if (clone.headers[k]) clone.headers[k] = '[REDACTED_HEADER]';
+        });
+    }
+    maskKey(clone, 'api_key');
+    maskKey(clone, 'psid');
+    maskKey(clone, 'psidts');
+    return clone;
 }
 
 function showDetail(record) {
     const panel = document.getElementById('logs-detail');
     const json = document.getElementById('log-detail-json');
     if (panel && json) {
-        json.textContent = JSON.stringify(record, null, 2);
+        const safeRecord = sanitizeRecordForDisplay(record);
+        json.textContent = JSON.stringify(safeRecord, null, 2);
         panel.classList.add('visible');
     }
 }

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.utils.atomic_io import atomic_write_json
+from app.config import mask_secret
 
 
 PROVIDER_CATALOG = {
@@ -107,11 +108,7 @@ class ApiKeyPool:
             for entry in self.entries.values():
                 entry_dict = asdict(entry)
                 if mask and entry_dict["api_key"]:
-                    key = entry_dict["api_key"]
-                    if len(key) > 8:
-                        entry_dict["api_key"] = f"{key[:4]}****{key[-4:]}"
-                    else:
-                        entry_dict["api_key"] = "****"
+                    entry_dict["api_key"] = mask_secret(entry_dict["api_key"])
                 result.append(entry_dict)
             return result
 

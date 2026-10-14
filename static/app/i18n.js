@@ -1,3 +1,5 @@
+import { safeStorage } from './services/storageService.js';
+
 const translations = {
     'zh-CN': {
         'header.title': 'Gemini2API',
@@ -1386,7 +1388,7 @@ const translations = {
 };
 
 const LANG_KEY = 'gemini2api_lang';
-let currentLang = localStorage.getItem(LANG_KEY) || 'en-US';
+let currentLang = safeStorage.getItem(LANG_KEY) || 'en-US';
 
 export function t(key) {
     const lang = translations[currentLang] || translations['en-US'];
@@ -1396,7 +1398,7 @@ export function t(key) {
 export function setLanguage(lang) {
     if (!translations[lang]) return;
     currentLang = lang;
-    localStorage.setItem(LANG_KEY, lang);
+    safeStorage.setItem(LANG_KEY, lang);
     updatePageLanguage();
 }
 

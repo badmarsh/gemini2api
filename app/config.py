@@ -20,13 +20,17 @@ def _generate_api_key() -> str:
 
 
 def mask_secret(value: str) -> str:
-    """对密钥/凭据做日志/响应安全掩码，仅保留首尾少量字符。空值返回空串。"""
+    """Cryptographic boundary masking: strictly expose first 6 and last 4 characters.
+    Short credentials (<= 8 chars) are fully masked. Returns empty string for empty input.
+    """
     if not value:
         return ""
-    v = str(value)
+    v = str(value).strip()
     if len(v) <= 8:
-        return "****"
-    return f"{v[:4]}****{v[-4:]}"
+        return "******"
+    if len(v) <= 10:
+        return f"{v[:2]}...{v[-2:]}"
+    return f"{v[:6]}...{v[-4:]}"
 
 
 class Settings(BaseSettings):

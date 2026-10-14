@@ -1,6 +1,7 @@
 import { apiCall } from './auth.js';
-import { showToast, escapeHtml } from './utils.js';
+import { showToast, escapeHtml, maskString } from './utils.js';
 import { t } from './i18n.js';
+import { validateApiKeyPayload } from './services/validationService.js';
 
 // Double-quote attribute escaping: escapeHtml (via textContent) does not escape ASCII double quotes,
 // so directly concatenating into value="..." could allow `"` injection.
@@ -204,7 +205,8 @@ async function handleAddKey() {
     if (models.length === 0) { showToast('Please select at least one model', 'warning'); return; }
 
     try {
-        await apiCall('POST', '/admin/api-keys', { provider, models, api_key: apiKey, base_url: baseUrl, label, reasoning_effort: reasoningEffort || null });
+        const payload = validateApiKeyPayload({ provider, models, api_key: apiKey, base_url: baseUrl, label, reasoning_effort: reasoningEffort || null });
+        await apiCall('POST', '/admin/api-keys', payload);
         showToast('Key added successfully', 'success');
         hideAddPanel();
         await loadApiKeys();
@@ -251,7 +253,7 @@ function renderKeysList() {
         html += '<td><input type="checkbox" class="ak-cb" data-id="' + idEsc + '"></td>';
         html += '<td><span class="ak-provider-badge" style="background:' + color + '20;color:' + color + '">' + escapeHtml(String(key.provider ?? '')) + '</span></td>';
         html += '<td>' + escapeHtml(String(key.model ?? '-')) + '</td>';
-        html += '<td><span class="ak-key-masked">' + escapeHtml(String(key.api_key ?? '-')) + '</span></td>';
+        html += '<td><span class="ak-key-masked">' + escapeHtml(maskString(String(key.api_key ?? '-'), 6, 4)) + '</span></td>';
         html += '<td>' + escapeHtml(String(key.label ?? '-')) + '</td>';
         html += '<td><span class="' + statusClass + '">' + escapeHtml(statusText) + '</span></td>';
         html += '<td><input type="text" class="ak-effort-input" data-id="' + idEsc +

@@ -20,12 +20,13 @@ _start_time = time.time()
 
 
 def _masked_status() -> dict:
-    """VULN-003：在响应层对 psid（Google 登录态 Cookie）脱敏，不改 account_pool 内部数据。
-    get_status() 每次返回新 dict，可安全就地掩码。保留字段，仅掩码值。"""
+    """Mask Google authentication tokens (psid, psidts) at response boundary without mutating internal pool state."""
     status = account_pool.get_status()
     for acc in status.get("accounts", []):
         if acc.get("psid"):
             acc["psid"] = mask_secret(acc["psid"])
+        if acc.get("psidts"):
+            acc["psidts"] = mask_secret(acc["psidts"])
     return status
 
 

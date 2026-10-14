@@ -1,9 +1,12 @@
 /**
- * Authentication module - Token management and API call wrappers
+ * Authentication module - Secure token management and timeout-guarded API call wrappers
  */
 
-const TOKEN_KEY = 'gemini2api_token';
-const SESSION_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+import { APP_CONSTANTS } from './config/constants.js';
+import { safeStorage } from './services/storageService.js';
+
+const TOKEN_KEY = APP_CONSTANTS.STORAGE_KEYS.TOKEN;
+const SESSION_TIMEOUT = APP_CONSTANTS.TIMEOUTS.SESSION_IDLE;
 let _sessionTimer = null;
 
 function _resetSessionTimer() {
@@ -25,11 +28,11 @@ function _initSessionWatcher() {
 }
 
 /**
- * Get stored token
+ * Get stored token from safe storage
  * @returns {string|null}
  */
 function getToken() {
-    return localStorage.getItem(TOKEN_KEY);
+    return safeStorage.getSecureItem(TOKEN_KEY);
 }
 
 /**
@@ -41,18 +44,22 @@ function isAuthenticated() {
 }
 
 /**
- * Save token to local storage
+ * Save token to safe storage with boundary encoding
  * @param {string} token
  */
 function saveToken(token) {
-    localStorage.setItem(TOKEN_KEY, token);
+    if (token) {
+        safeStorage.setSecureItem(TOKEN_KEY, token);
+    } else {
+        clearToken();
+    }
 }
 
 /**
  * Clear token
  */
 function clearToken() {
-    localStorage.removeItem(TOKEN_KEY);
+    safeStorage.removeItem(TOKEN_KEY);
 }
 
 /**
@@ -64,13 +71,25 @@ function logout() {
 }
 
 /**
- * Common API request method
+ * Sanitizes an error message by stripping potential secrets or auth headers
+ */
+function sanitizeErrorMessage(msg) {
+    if (!msg) return 'Unknown error';
+    return String(msg)
+        .replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, 'Bearer [REDACTED]')
+        .replace(/(__Secure-1PSID[A-Za-z0-9_\-]*=)[^;]+/gi, '$1[REDACTED]')
+        .replace(/(sk-[A-Za-z0-9]{6})[A-Za-z0-9]+/gi, '$1****');
+}
+
+/**
+ * Common API request method with AbortController, timeout bounds, and credential protection
  * @param {string} method - HTTP method
  * @param {string} path - API endpoint path
  * @param {Object} body - Request body
+ * @param {Object} options - { timeout, signal }
  * @returns {Promise<any>}
  */
-async function apiCall(method, path, body = null) {
+async function apiCall(method, path, body = null, options = {}) {
     const token = getToken();
     const headers = {
         'Content-Type': 'application/json'
@@ -80,9 +99,25 @@ async function apiCall(method, path, body = null) {
         headers['Authorization'] = `Bearer ${token}`;
     }
 
+    const timeout = options.timeout || APP_CONSTANTS.TIMEOUTS.API_DEFAULT;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+        controller.abort(new Error(`API request timed out after ${timeout / 1000}s`));
+    }, timeout);
+
+    // If caller provided an external abort signal, chain it
+    if (options.signal) {
+        if (options.signal.aborted) {
+            clearTimeout(timeoutId);
+            throw new Error('Request was aborted');
+        }
+        options.signal.addEventListener('abort', () => controller.abort());
+    }
+
     const config = {
         method,
-        headers
+        headers,
+        signal: controller.signal
     };
 
     if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
@@ -91,6 +126,7 @@ async function apiCall(method, path, body = null) {
 
     try {
         const response = await fetch(path, config);
+        clearTimeout(timeoutId);
 
         // Redirect to login if 401 Unauthorized
         if (response.status === 401) {
@@ -109,17 +145,20 @@ async function apiCall(method, path, body = null) {
         }
 
         if (!response.ok) {
-            const errorMessage = (data && typeof data === 'object' && data.error && data.error.message)
+            const rawMsg = (data && typeof data === 'object' && data.error && data.error.message)
                 || (data && typeof data === 'object' && data.detail)
                 || (data && typeof data === 'object' && data.message)
                 || `Request failed (status: ${response.status})`;
-            throw new Error(errorMessage);
+            throw new Error(sanitizeErrorMessage(rawMsg));
         }
 
         return data;
     } catch (error) {
-        console.error('API request error:', error);
-        throw error;
+        clearTimeout(timeoutId);
+        const cleanMessage = sanitizeErrorMessage(error.message);
+        const sanitizedErr = new Error(cleanMessage);
+        sanitizedErr.name = error.name;
+        throw sanitizedErr;
     }
 }
 
@@ -134,7 +173,7 @@ async function initAuth() {
     }
 
     try {
-        await apiCall('GET', '/admin/verify');
+        await apiCall('GET', APP_CONSTANTS.ROUTES.ADMIN_VERIFY, null, { timeout: APP_CONSTANTS.TIMEOUTS.HEALTH_CHECK });
         _initSessionWatcher();
         return true;
     } catch (error) {
@@ -152,12 +191,11 @@ async function initAuth() {
 async function login(apiKey) {
     try {
         saveToken(apiKey);
-        await apiCall('GET', '/health');
+        await apiCall('GET', APP_CONSTANTS.ROUTES.HEALTH, null, { timeout: APP_CONSTANTS.TIMEOUTS.HEALTH_CHECK });
         return { success: true };
     } catch (error) {
         clearToken();
-        console.error('Login error:', error);
-        return { success: false, message: error.message || 'Login failed, please check your API key' };
+        return { success: false, message: sanitizeErrorMessage(error.message) || 'Login failed, please check your API key' };
     }
 }
 
@@ -171,7 +209,6 @@ export {
     logout,
     apiCall,
     initAuth,
-    login
+    login,
+    sanitizeErrorMessage
 };
-
-console.log('Auth module loaded');

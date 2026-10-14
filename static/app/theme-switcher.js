@@ -1,10 +1,13 @@
 /**
  * Theme switcher module
- * Supports light / dark theme switching and persists preference to localStorage.
+ * Supports light / dark theme switching and persists preference via safeStorage.
  */
 
+import { safeStorage } from './services/storageService.js';
+import { APP_CONSTANTS } from './config/constants.js';
+
 // Theme constants
-const THEME_KEY = 'gemini2api_theme';
+const THEME_KEY = APP_CONSTANTS.STORAGE_KEYS.THEME;
 const THEME_LIGHT = 'light';
 const THEME_DARK = 'dark';
 
@@ -13,13 +16,11 @@ const THEME_DARK = 'dark';
  * @returns {string} Current theme ('light' or 'dark')
  */
 function getCurrentTheme() {
-    // Prefer localStorage
-    const savedTheme = localStorage.getItem(THEME_KEY);
+    const savedTheme = safeStorage.getItem(THEME_KEY);
     if (savedTheme) {
         return savedTheme;
     }
 
-    // Check system preference
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
         return THEME_DARK;
     }
@@ -40,13 +41,8 @@ function setTheme(theme) {
         root.removeAttribute('data-theme');
     }
 
-    // Save to localStorage
-    localStorage.setItem(THEME_KEY, theme);
-
-    // Update meta theme-color
+    safeStorage.setItem(THEME_KEY, theme);
     updateMetaThemeColor(theme);
-
-    // Dispatch custom event
     window.dispatchEvent(new CustomEvent('themechange', { detail: { theme } }));
 }
 
@@ -77,42 +73,35 @@ function updateMetaThemeColor(theme) {
  * @param {string} [toggleButtonId='themeToggleBtn'] - Toggle button ID
  */
 function initThemeSwitcher(toggleButtonId = 'themeToggleBtn') {
-    // Apply saved theme or system preference
     const savedTheme = getCurrentTheme();
     setTheme(savedTheme);
 
-    // Bind toggle button click
     const toggleBtn = document.getElementById(toggleButtonId);
     if (toggleBtn) {
         toggleBtn.addEventListener('click', () => {
-            const newTheme = toggleTheme();
-            console.log(`Theme switched to: ${newTheme === THEME_DARK ? 'dark mode' : 'light mode'}`);
+            toggleTheme();
         });
     }
 
-    // Listen for system theme changes
     if (window.matchMedia) {
         const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
         mediaQuery.addEventListener('change', (e) => {
-            const savedTheme = localStorage.getItem(THEME_KEY);
+            const savedTheme = safeStorage.getItem(THEME_KEY);
             if (!savedTheme) {
                 setTheme(e.matches ? THEME_DARK : THEME_LIGHT);
             }
         });
     }
-
-    console.log(`Theme switcher initialized, current theme: ${savedTheme === THEME_DARK ? 'dark mode' : 'light mode'}`);
 }
 
 /**
  * Check if dark theme is active
  * @returns {boolean}
  */
-function isDarkTheme() {
+function isDarkMode() {
     return getCurrentTheme() === THEME_DARK;
 }
 
-// Export functions and constants
 export {
     THEME_KEY,
     THEME_LIGHT,
@@ -121,5 +110,5 @@ export {
     setTheme,
     toggleTheme,
     initThemeSwitcher,
-    isDarkTheme
+    isDarkMode
 };
