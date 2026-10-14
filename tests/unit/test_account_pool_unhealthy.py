@@ -278,7 +278,9 @@ def test_saturated_healthy_pool_timeout_keeps_original_busy_error_and_529():
     elapsed, msg, account = asyncio.run(_run())
 
     # 真忙就该真等：等满 acquire_timeout 才报错（不能被 F1 改成秒失败）
-    assert elapsed >= 0.3, f"只等了 {elapsed:.2f}s，健康满载的池必须排队等满超时"
+    # Windows timers tick at ~15.6 ms, so a 0.3s asyncio timeout can fire a few ms early
+    # as seen by time.monotonic(); allow that slack instead of flaking (~1 in 5 runs).
+    assert elapsed >= 0.3 - 0.03, f"只等了 {elapsed:.2f}s，健康满载的池必须排队等满超时"
     assert msg == "All accounts busy (max_concurrent=2), waited 0.3s"
     assert account.active_requests == 2
     assert classify_error(RuntimeError(msg)) == (529, "overloaded_error", 30)
