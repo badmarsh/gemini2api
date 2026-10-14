@@ -118,6 +118,17 @@ class RotationStrategy(str, Enum):
     ROUND_ROBIN = "round-robin"
     FAILOVER = "failover"
 
+    @classmethod
+    def _missing_(cls, value):
+        # Tolerate "round_robin", "Round-Robin", " FAILOVER " etc. so a documented
+        # or hand-typed ROTATION_STRATEGY can't crash startup.
+        if isinstance(value, str):
+            normalized = value.strip().lower().replace("_", "-")
+            for member in cls:
+                if member.value == normalized:
+                    return member
+        return None
+
 
 @dataclass
 class Account:

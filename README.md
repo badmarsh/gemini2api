@@ -272,7 +272,7 @@ Upstream collapsed multi-turn prompts into just the latest single user message w
 | `PORT` | `5918` | Listening port for the gateway service |
 | `API_KEY` | Auto-generated | Bearer token required for clients calling the proxy |
 | `ACCOUNTS_FILE` | `accounts.json` | Path to the multi-account cookie configuration file |
-| `ROTATION_STRATEGY` | `round_robin` | Account rotation mode (`round_robin` or `failover`) |
+| `ROTATION_STRATEGY` | `round-robin` | Account rotation mode (`round-robin` or `failover`) |
 | `FALLBACK_ENABLED` | `false` | Enable fallback to third-party providers when accounts exhaust |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 

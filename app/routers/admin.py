@@ -254,7 +254,7 @@ async def check_update():
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                "https://api.github.com/repos/xwteam/gemini2api/releases/latest",
+                "https://api.github.com/repos/badmarsh/gemini2api/releases/latest",
                 headers={"Accept": "application/vnd.github.v3+json"}
             )
             if resp.status_code == 200:
@@ -264,13 +264,13 @@ async def check_update():
                     "current": current,
                     "latest": latest,
                     "has_update": latest != current and latest != "",
-                    "update_url": data.get("html_url", "https://github.com/xwteam/gemini2api/releases"),
+                    "update_url": data.get("html_url", "https://github.com/badmarsh/gemini2api/releases"),
                     "release_notes": data.get("body", "")
                 }
     except Exception as e:
         logger.error(f"Failed to check update: {e}")
 
-    return {"current": current, "latest": current, "has_update": False, "update_url": "https://github.com/xwteam/gemini2api/releases"}
+    return {"current": current, "latest": current, "has_update": False, "update_url": "https://github.com/badmarsh/gemini2api/releases"}
 
 
 @router.post("/update")

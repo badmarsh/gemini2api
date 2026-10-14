@@ -15,13 +15,34 @@ STATIC_EXTENSIONS = {".html", ".css", ".js", ".ico", ".png", ".jpg", ".svg", ".w
 # 全局 verify_api_key 对其放行以避免双重校验冲突（设置独立 admin_api_key 后两把 key 不同会互相误拒）。
 ADMIN_PATH_PREFIX = "/admin"
 
+# Static-asset bypass is only for read-only methods. A mutating request such as
+# DELETE /admin/accounts/test.png must never be treated as a static file.
+_STATIC_SAFE_METHODS = frozenset({"GET", "HEAD"})
 
-def _is_public_path(path: str) -> bool:
-    """无需鉴权即可访问的路径（与原 verify_api_key 放行逻辑逐字节一致）。"""
+# API / admin namespaces. Paths under these prefixes are never eligible for the
+# static-extension bypass, whatever their suffix looks like.
+_PROTECTED_PREFIXES = ("/admin", "/v1", "/v1beta", "/openai", "/claude", "/gemini")
+
+
+def _has_protected_prefix(path: str) -> bool:
+    return any(path == p or path.startswith(p + "/") for p in _PROTECTED_PREFIXES)
+
+
+def _is_public_path(path: str, method: str = "GET") -> bool:
+    """无需鉴权即可访问的路径。
+
+    Exact public pages (/health, /, /login.html, /index.html) keep their original
+    behaviour. The static-file bypass (extension match, /app/, /components/) applies
+    only to GET/HEAD and never to the API/admin prefixes.
+    """
     if path == "/health":
         return True
     if path in ("/", "/login.html", "/index.html"):
         return True
+    if method.upper() not in _STATIC_SAFE_METHODS:
+        return False
+    if _has_protected_prefix(path):
+        return False
     suffix = PurePosixPath(path).suffix.lower()
     if suffix in STATIC_EXTENSIONS:
         return True
@@ -70,11 +91,11 @@ async def verify_api_key(request: Request):
     """业务 API 全局鉴权。管理类路径(/admin/*)交由 verify_admin_key 校验，此处放行避免双重校验。"""
     path = request.url.path
 
-    if _is_public_path(path):
+    if _is_public_path(path, request.method):
         return
 
     # 管理类路由由 verify_admin_key（在 include_router 时挂载）负责，避免与独立 admin_api_key 冲突
-    if path.startswith(ADMIN_PATH_PREFIX):
+    if path == ADMIN_PATH_PREFIX or path.startswith(ADMIN_PATH_PREFIX + "/"):
         return
 
     key = _extract_request_key(request)
@@ -86,12 +107,10 @@ async def verify_api_key(request: Request):
 
 
 async def verify_admin_key(request: Request):
-    """管理面板/admin 路由鉴权。配置了 admin_api_key 则校验它，否则回退 api_key（默认单 key 全功能，零回归）。"""
-    path = request.url.path
+    """管理面板/admin 路由鉴权。配置了 admin_api_key 则校验它，否则回退 api_key（默认单 key 全功能，零回归）。
 
-    if _is_public_path(path):
-        return
-
+    Admin routes are never public: no static-extension or other path-based exemption applies here.
+    """
     admin_key = (settings.admin_api_key or "").strip()
     expected = admin_key if admin_key else settings.api_key
 
