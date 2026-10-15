@@ -243,8 +243,9 @@ async def fetch_models(req: FetchModelsRequest):
         }
         url = f"{base_url}/models"
     elif req.provider == "gemini":
-        url = f"{base_url}/models?key={req.api_key}"
-        headers = {}
+        # Key goes in a header: a ?key= query string leaks into exception text and proxy logs.
+        url = f"{base_url}/models"
+        headers = {"x-goog-api-key": req.api_key}
     else:
         url = f"{base_url}/models"
 
@@ -285,8 +286,17 @@ async def fetch_models(req: FetchModelsRequest):
         elif e.response.status_code == 502:
             raise HTTPException(status_code=502, detail="Bad gateway")
         else:
-            raise HTTPException(status_code=e.response.status_code, detail=str(e))
+            # str(e) embeds the full request URL; report the status code only.
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=f"Upstream returned HTTP {e.response.status_code}",
+            )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Request timeout")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch models: {str(e)}")
+        # Type name only: str(e) can carry the request URL and key material.
+        logger.warning("fetch_models failed: %s", type(e).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch models: {type(e).__name__}",
+        )

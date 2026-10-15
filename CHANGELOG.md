@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Security
 - `/docs`, `/redoc` and `/openapi.json` are now disabled by default (404). FastAPI serves them without checking the API key, and they listed every route including the admin API. Set `DOCS_ENABLED=true` to bring them back; they stay unauthenticated, so use it for local development only.
+- The uvicorn access log no longer prints `?token=` values or `sk-...` keys from the request path; a logging filter scrubs them before the line is formatted.
+- `POST /admin/api-keys/models` now sends a Gemini key in the `x-goog-api-key` header instead of the `?key=` query string, and no longer echoes upstream exception text (which embedded the request URL) back to the client. Errors report only the HTTP status or the exception type.
 
 ### Fixed
 - `.env` robustness on Windows: a UTF-8 BOM at the start of the file (added by Notepad or PowerShell 5.1) no longer breaks the first key, and unknown keys (for example those used by the refresher, which shares the file) no longer crash startup. Startup logs one warning listing the unknown key names (never values) so typos are still noticed.
@@ -15,6 +17,8 @@ All notable changes to this project will be documented in this file. The format 
 - Text encoding is now explicit everywhere (`utf-8-sig` when reading hand-edited files, `utf-8` when writing), so the app no longer depends on the Windows locale code page. Persistence is hardened against bad files: conversation history is written atomically and loaded file by file, and a corrupt `accounts.json` is moved to `accounts.json.corrupt-<YYYYmmdd-HHMMSS>` before the pool starts empty instead of being silently overwritten.
 - Usage statistics snapshots kept failing on Windows because `Path.rename` raises `FileExistsError` when the target exists; they now use `replace`, so persistence works there.
 - An auto-generated API key is now persisted when `.env` has no exact `API_KEY=` line (for example only `ADMIN_API_KEY=`, an `export` prefix, or an empty value). The file is parsed line by line and "saved" is only logged after the write succeeded.
+- `POST /admin/restart` flushes the log store before signalling and now answers `501` on Windows, where `os.kill(SIGTERM)` is a hard `TerminateProcess` (no graceful shutdown and nothing starts the service again). The web console's Restart button now passes the required `?confirm=true`; before, it always got `400` and silently did nothing.
+- `.env` rewrites (settings panel, fallback toggle, generated API key) are atomic: a temp file next to `.env` is swapped in with `os.replace`, so a crash can no longer leave a truncated file. A read-only `.env` still fails up front with a permission error, the file mode is kept, and a bind-mounted `.env` that cannot be renamed over falls back to a direct write. A newly created `.env` is now private (0600).
 
 ---
 

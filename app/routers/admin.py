@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import platform
@@ -232,8 +233,23 @@ async def verify_token():
     return {"status": "ok"}
 
 
+# Delay between answering the request and sending SIGTERM, so the response gets out first.
+_RESTART_DELAY_SECONDS = 0.5
+
+
+def _restart_supported() -> bool:
+    """SIGTERM means "graceful stop" only on POSIX; on Windows os.kill is a hard TerminateProcess."""
+    return sys.platform != "win32"
+
+
+def _terminate_self() -> None:
+    import signal
+
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 @router.post("/restart")
-async def restart_server(confirm: bool = False):
+async def restart_server(request: Request, confirm: bool = False):
     """重启服务（已受 admin 鉴权保护）。需 confirm=true 防误触，
     避免无意/单击直接触发进程级 SIGTERM 造成可用性中断（VULN-009）。"""
     if not confirm:
@@ -241,12 +257,31 @@ async def restart_server(confirm: bool = False):
             status_code=400,
             content={"error": {"message": "Restart requires secondary confirmation, please supply query param ?confirm=true", "type": "confirmation_required"}},
         )
+    if not _restart_supported():
+        return JSONResponse(
+            status_code=501,
+            content={"error": {
+                "message": (
+                    "Restart is not supported on Windows: stopping the process there is a hard kill "
+                    "(no graceful shutdown) and nothing starts it again. "
+                    "Restart the service manually or through your service manager."
+                ),
+                "type": "not_implemented",
+            }},
+        )
+    # Persist buffered logs before signalling. Flushing is synchronous file I/O, so run it in a
+    # worker thread; a failing flush must not block the restart.
+    log_store = getattr(request.app.state, "log_store", None)
+    if log_store is not None:
+        try:
+            await asyncio.to_thread(log_store.flush)
+        except Exception as e:
+            logger.warning("Log flush before restart failed: %s", type(e).__name__)
     import threading
-    import signal
 
     def _restart():
-        time.sleep(0.5)
-        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(_RESTART_DELAY_SECONDS)
+        _terminate_self()
 
     threading.Thread(target=_restart, daemon=True).start()
     return {"status": "ok", "message": "Server restarting..."}

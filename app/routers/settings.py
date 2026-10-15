@@ -17,6 +17,7 @@ from app.core.settings_overrides import (
     coerce_value,
     save_overrides,
 )
+from app.utils import atomic_io
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def _update_env_file(updates: Dict[str, Any]) -> None:
         for key, value in updates.items():
             env_key = key.upper()
             lines.append(f"{env_key}={value}")
-        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_io.atomic_rewrite_text(env_path, "\n".join(lines) + "\n")
         logger.info(f"Created .env file with {len(updates)} settings")
         return
 
@@ -144,7 +145,7 @@ def _update_env_file(updates: Dict[str, Any]) -> None:
             new_lines.append(f"{env_key}={value}")
 
     # Write back to file
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    atomic_io.atomic_rewrite_text(env_path, "\n".join(new_lines) + "\n")
     logger.info(f"Updated .env file with {len(updates)} settings")
 
 

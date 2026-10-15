@@ -5,8 +5,10 @@
 os.replace 在同一文件系统上是原子操作，故临时文件必须与目标同目录。
 """
 
+import errno
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Union
@@ -51,3 +53,52 @@ def atomic_write_json(
 ) -> None:
     """原子写 JSON（序列化参数与原生 json.dump 对齐，保持文件格式不变）。"""
     atomic_write_text(path, json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii))
+
+
+def atomic_rewrite_text(path: Union[str, Path], data: str, encoding: str = "utf-8") -> None:
+    """Atomically rewrite a user-editable config file (``.env``), keeping its permissions.
+
+    Unlike :func:`atomic_write_text` this is meant for files an operator may deliberately
+    make read-only or bind-mount into a container:
+
+    * An existing target that is not writable raises ``PermissionError`` up front. A plain
+      rename would otherwise silently replace a read-only file on POSIX, and callers rely on
+      the error to roll back their other persisted layers.
+    * The data goes to a temp file next to the target (fsync, mode copied from the target),
+      then ``os.replace`` swaps it in, so a crash never leaves a truncated file behind.
+    * ``EBUSY`` / ``EXDEV`` from the swap (a single file bind-mounted into a container cannot
+      be renamed over) fall back to a direct in-place write.
+
+    Text is written with ``Path.write_text``, so newline translation matches the direct writes
+    this replaces. A new file is created private (0600) by ``mkstemp``.
+    """
+    target = Path(path)
+    existing = target.exists()
+    if existing and not os.access(target, os.W_OK):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(target))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".", suffix=".tmp")
+    os.close(fd)
+    try:
+        Path(tmp).write_text(data, encoding=encoding)
+        try:
+            sync_fd = os.open(tmp, os.O_RDWR | getattr(os, "O_BINARY", 0))
+            try:
+                os.fsync(sync_fd)
+            finally:
+                os.close(sync_fd)
+        except OSError:
+            pass  # durability is best effort; atomicity does not depend on it
+        if existing:
+            shutil.copymode(target, tmp)
+        try:
+            os.replace(tmp, target)
+        except OSError as e:
+            if e.errno not in (errno.EBUSY, errno.EXDEV):
+                raise
+            target.write_text(data, encoding=encoding)
+    finally:
+        try:
+            os.unlink(tmp)  # already gone after a successful os.replace
+        except OSError:
+            pass

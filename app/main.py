@@ -242,6 +242,43 @@ def _scrub_sensitive(text: str) -> str:
     return _SK_SCRUB_RE.sub("sk-****", scrubbed)
 
 
+class AccessLogScrubFilter(logging.Filter):
+    """Scrub secrets (?token=..., sk-... keys) from uvicorn access-log records.
+
+    uvicorn builds the access line from ``record.args`` =
+    (client_addr, method, full_path, http_version, status_code); ``full_path`` includes the
+    query string, so it must be scrubbed before any handler formats the record. Only str items
+    are touched: the int status code has to stay an int because the format string uses ``%d``.
+    """
+
+    _g2a_access_scrub = True
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple):
+            record.args = tuple(
+                _scrub_sensitive(a) if isinstance(a, str) else a for a in args
+            )
+        return True
+
+
+def _install_access_log_scrub() -> None:
+    """Attach the scrub filter to ``uvicorn.access`` exactly once.
+
+    Called at import time: uvicorn configures logging (dictConfig) before it imports the app,
+    and dictConfig replaces handlers but leaves logger filters alone, so the filter survives.
+    Re-running (or reloading this module) replaces the previous instance instead of stacking.
+    """
+    access_logger = logging.getLogger("uvicorn.access")
+    for existing in list(access_logger.filters):
+        if getattr(existing, "_g2a_access_scrub", False):
+            access_logger.removeFilter(existing)
+    access_logger.addFilter(AccessLogScrubFilter())
+
+
+_install_access_log_scrub()
+
+
 # ---------------------------------------------------------------------------
 # 完整请求/响应体记录（settings.log_bodies_enabled，默认关）
 # ---------------------------------------------------------------------------

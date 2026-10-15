@@ -1286,7 +1286,7 @@ function initEventListeners() {
             restartBtn.classList.add('restarting');
             showToast(t('toast.restarting'), 'success');
             try {
-                await apiCall('POST', '/admin/restart');
+                await apiCall('POST', '/admin/restart?confirm=true');
             } catch (e) {}
             setTimeout(() => {
                 const check = setInterval(async () => {

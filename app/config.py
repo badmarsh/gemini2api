@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 
 from app.core.settings_overrides import apply_overrides
+from app.utils import atomic_io
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ def _persist_api_key():
         # 无 .env 时此前直接 return，导致自动生成的 key 从不持久化，每次重启都换新 key，
         # 静默失效所有客户端凭据（修复 #33）。这里创建 .env 并写入，使其跨重启存活。
         try:
-            env_path.write_text(f"API_KEY={settings.api_key}\n", encoding="utf-8")
+            atomic_io.atomic_rewrite_text(env_path, f"API_KEY={settings.api_key}\n")
             logger.info(
                 f"API Key generated and saved to new .env: {mask_secret(settings.api_key)}"
             )
@@ -236,9 +237,9 @@ def _persist_api_key():
         if api_key_lines:
             for i in api_key_lines:  # only empty API_KEY= lines: fill them in place
                 lines[i] = f"API_KEY={settings.api_key}"
-            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            atomic_io.atomic_rewrite_text(env_path, "\n".join(lines) + "\n")
         else:
-            env_path.write_text(content.rstrip("\n") + f"\nAPI_KEY={settings.api_key}\n", encoding="utf-8")
+            atomic_io.atomic_rewrite_text(env_path, content.rstrip("\n") + f"\nAPI_KEY={settings.api_key}\n")
     except Exception as e:
         logger.warning(
             f"API Key generated but could NOT be persisted (.env unwritable: {e}); "
