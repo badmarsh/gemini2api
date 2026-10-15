@@ -191,29 +191,34 @@ async def check_single_account(account_id: str):
 class UpdateCookiesRequest(BaseModel):
     psid: str
     psidts: str = ""
+    persist: bool = True
 
 
 @router.put("/accounts/{account_id}/cookies")
 async def update_account_cookies(account_id: str, req: UpdateCookiesRequest):
     for account in account_pool.accounts:
         if account.id == account_id:
-            if account.client:
-                result = await account.client.reload_cookies(psid=req.psid, psidts=req.psidts)
-                if result.get("success"):
-                    account.status = AccountStatus.ACTIVE
-                    account.psid = req.psid
-                    account.psidts = req.psidts
-                    account.consecutive_failures = 0
-                    account.last_error = ""
-                    account_pool._save_to_file()
-                    return {"status": "ok", "message": f"Account {account_id} cookies updated"}
-                return JSONResponse(
-                    status_code=503,
-                    content={"error": {"message": result.get("error", "Cookie reload failed"), "type": "reload_error"}},
-                )
+            if account.client is None:
+                account.client = GeminiWebClient(psid=req.psid, psidts=req.psidts)
+            result = await account.client.reload_cookies(psid=req.psid, psidts=req.psidts)
+            if result.get("success"):
+                account.status = AccountStatus.ACTIVE
+                account.psid = req.psid
+                account.psidts = req.psidts
+                account.consecutive_failures = 0
+                account.last_error = ""
+                account_pool._save_to_file()
+                return {"status": "ok", "message": f"Account {account_id} cookies updated"}
+
+            if req.persist:
+                account.psid = req.psid
+                account.psidts = req.psidts
+                account.last_error = result.get("error", "Cookie reload failed")
+                account_pool._save_to_file()
+
             return JSONResponse(
                 status_code=503,
-                content={"error": {"message": "Account client not initialized", "type": "client_error"}},
+                content={"error": {"message": result.get("error", "Cookie reload failed"), "type": "reload_error"}},
             )
     return JSONResponse(
         status_code=404,

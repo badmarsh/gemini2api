@@ -555,7 +555,9 @@ class GeminiWebClient:
         # under it (see _lease_http / _retire_http).
         self._http_leases: dict[int, int] = {}
         self._http_retired: set[int] = set()
-        self._cookie_jar: PersistentCookieJar | None = None
+        self._cookie_jar: PersistentCookieJar | None = (
+            PersistentCookieJar(self._psid) if self._psid else None
+        )
         self._current_target: str = ""
         self._check_history: deque[dict] = deque(maxlen=20)
         self._last_check_result: dict | None = None
@@ -1875,6 +1877,8 @@ class GeminiWebClient:
         self._psidts = psidts
         self._session_token = session_token
         self._healthy = True
+        if self._cookie_jar is None and psid:
+            self._cookie_jar = PersistentCookieJar(psid)
         if self._cookie_jar is not None:
             self._cookie_jar.set("__Secure-1PSID", psid)
             if psidts:
@@ -1904,6 +1908,8 @@ class GeminiWebClient:
             # Streams already running hold a lease on old_http; the last one closes it.
             await self._retire_http(old_http)
 
+            if self._cookie_jar is None:
+                self._cookie_jar = PersistentCookieJar(self._psid)
             self._cookie_jar.set("__Secure-1PSID", self._psid)
             if self._psidts:
                 self._cookie_jar.set("__Secure-1PSIDTS", self._psidts)

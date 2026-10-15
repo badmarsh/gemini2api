@@ -52,3 +52,4 @@ docker-compose.override.yml
 # Audit / local plugins
 audit_contrast.py
 gemini2api-plugin/
+scratch/
