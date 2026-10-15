@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ---
 
+## [Unreleased]
+
+### Security
+- `/docs`, `/redoc` and `/openapi.json` are now disabled by default (404). FastAPI serves them without checking the API key, and they listed every route including the admin API. Set `DOCS_ENABLED=true` to bring them back; they stay unauthenticated, so use it for local development only.
+
+---
+
 ## [1.7.1] - 2026-10-14 (badmarsh/gemini2api v1.7.1)
 
 > Security patch for the static-extension authentication bypass, failover and stream reliability fixes, and secret-handling and console hardening.

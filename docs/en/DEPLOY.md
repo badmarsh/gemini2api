@@ -352,6 +352,7 @@ kill -9 <PID>
 | `ADMIN_API_KEY` | — | Separate auth key for the admin panel / `/admin` (empty falls back to `API_KEY`) |
 | `CORS_ALLOW_ORIGINS` | * | CORS allowed origins (comma-separated; `*` means all) |
 | `CORS_ALLOW_CREDENTIALS` | true | Whether CORS allows credentials |
+| `DOCS_ENABLED` | false | Serve `/docs`, `/redoc` and `/openapi.json`. **These pages are unauthenticated** (no API key is checked) and list every route, including the admin API, so enable them for local development only; when `false` all three return 404 |
 | `IMAGE_DOWNLOAD_SIZE_SUFFIX` | =s2048 | Generated-image download size suffix (`=s0` for full-resolution original) |
 | `IMAGE_DOWNLOAD_TIMEOUT` | 25.0 | Per-image download HTTP timeout (seconds) |
 | `FALLBACK_ENABLED` | false | Enable Gemini → third-party fallback: when any Gemini model (flash/pro/thinking) errors or returns an empty response, automatically retry natively with a third-party model from the API Key pool |

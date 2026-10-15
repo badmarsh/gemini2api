@@ -169,13 +169,25 @@ async def lifespan(app: FastAPI):
     await account_pool.shutdown()
 
 
-app = FastAPI(
-    title="Gemini2API",
-    description="Gemini Web to API proxy",
-    version=APP_VERSION,
-    lifespan=lifespan,
-    dependencies=[Depends(verify_api_key)],
-)
+def _fastapi_kwargs(docs_enabled: bool) -> dict:
+    """Keyword arguments for FastAPI(...).
+
+    /docs, /redoc and /openapi.json bypass the app-level auth dependency, so unless DOCS_ENABLED is
+    set they are removed entirely (404) instead of leaking the full route list to anonymous callers.
+    """
+    kwargs = dict(
+        title="Gemini2API",
+        description="Gemini Web to API proxy",
+        version=APP_VERSION,
+        lifespan=lifespan,
+        dependencies=[Depends(verify_api_key)],
+    )
+    if not docs_enabled:
+        kwargs.update(docs_url=None, redoc_url=None, openapi_url=None)
+    return kwargs
+
+
+app = FastAPI(**_fastapi_kwargs(settings.docs_enabled))
 
 # CORS 可配置（VULN-007）。默认 cors_allow_origins="*" + cors_allow_credentials=True → 与原行为完全一致；
 # 运维可经环境变量 CORS_ALLOW_ORIGINS（逗号分隔白名单）+ CORS_ALLOW_CREDENTIALS=false 收紧。
