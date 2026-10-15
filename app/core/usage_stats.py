@@ -86,7 +86,7 @@ class UsageStatsStore:
     def _load(self):
         try:
             if self._file_path.exists():
-                data = json.loads(self._file_path.read_text())
+                data = json.loads(self._file_path.read_text(encoding="utf-8"))
                 self._snapshots = data.get("snapshots", [])
                 bl = data.get("baseline")
                 if bl:
@@ -113,7 +113,7 @@ class UsageStatsStore:
             self._file_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._file_path.with_suffix(".tmp")
             payload = {"version": 1, "baseline": self._baseline, "snapshots": self._snapshots}
-            tmp.write_text(json.dumps(payload, ensure_ascii=False))
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             tmp.rename(self._file_path)
         except Exception as e:
             logger.error(f"[UsageStats] Save failed: {e}")

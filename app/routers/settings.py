@@ -107,12 +107,12 @@ def _update_env_file(updates: Dict[str, Any]) -> None:
         for key, value in updates.items():
             env_key = key.upper()
             lines.append(f"{env_key}={value}")
-        env_path.write_text("\n".join(lines) + "\n")
+        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         logger.info(f"Created .env file with {len(updates)} settings")
         return
 
     # Read existing content
-    content = env_path.read_text()
+    content = env_path.read_text(encoding="utf-8-sig")
     lines = content.splitlines()
 
     # Track which keys were updated
@@ -144,7 +144,7 @@ def _update_env_file(updates: Dict[str, Any]) -> None:
             new_lines.append(f"{env_key}={value}")
 
     # Write back to file
-    env_path.write_text("\n".join(new_lines) + "\n")
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     logger.info(f"Updated .env file with {len(updates)} settings")
 
 

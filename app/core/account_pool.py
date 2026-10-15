@@ -1,5 +1,6 @@
 import json
 import time
+import shutil
 import asyncio
 import logging
 from enum import Enum
@@ -214,9 +215,13 @@ class AccountPool:
         # 整文件损坏（半截 JSON/断电）时容错：记录日志后当作空池，绝不让单个坏文件
         # 在 initialize() 期间抛异常把整个进程启动卡死（VULN-010 读容错）。
         try:
-            data = json.loads(path.read_text())
+            # utf-8-sig: the file is hand-editable and Windows editors may add a BOM.
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            if not isinstance(data, (list, dict)):
+                raise ValueError(f"unexpected JSON root type: {type(data).__name__}")
         except Exception as e:
             logger.error(f"accounts file {path} is corrupt, starting with empty pool: {e}")
+            self._backup_corrupt_file(path)
             return
         accounts_data = data if isinstance(data, list) else data.get("accounts", [])
         for i, item in enumerate(accounts_data):
@@ -239,6 +244,26 @@ class AccountPool:
             self._accounts.append(account)
         # 把计数器推到所有现存 account-N 后端的下一位，避免后续 add_account 撞号。
         self._sync_id_seq()
+
+    @staticmethod
+    def _backup_corrupt_file(path: Path) -> None:
+        """Copy an unparsable accounts file aside so a later save cannot destroy the original.
+
+        The name has no colons (invalid on Windows). A failed copy is logged, never fatal.
+        """
+        try:
+            if not path.exists():
+                return
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = path.with_name(f"{path.name}.corrupt-{stamp}")
+            n = 1
+            while backup.exists():
+                backup = path.with_name(f"{path.name}.corrupt-{stamp}-{n}")
+                n += 1
+            shutil.copy2(path, backup)
+            logger.warning(f"Backed up corrupt accounts file to {backup}")
+        except Exception as e:
+            logger.warning(f"Could not back up corrupt accounts file {path}: {e}")
 
     def _sync_id_seq(self):
         """让 _next_id_seq 大于所有现存 'account-<n>' 的数字后缀，保证后续生成的 id 唯一。"""

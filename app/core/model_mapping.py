@@ -15,7 +15,7 @@ class ModelMapping:
     def _load(self):
         if self.path.exists():
             try:
-                self.mappings = json.loads(self.path.read_text())
+                self.mappings = json.loads(self.path.read_text(encoding="utf-8-sig"))
                 logger.info(f"Loaded {len(self.mappings)} model mappings")
             except Exception as e:
                 logger.error(f"Failed to load model mappings: {e}")
@@ -26,7 +26,7 @@ class ModelMapping:
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.mappings, indent=2, ensure_ascii=False))
+        self.path.write_text(json.dumps(self.mappings, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def get_all(self) -> Dict[str, str]:
         return dict(self.mappings)

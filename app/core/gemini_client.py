@@ -481,7 +481,7 @@ def _filter_valid_models(raw_hits: list[str]) -> list[str]:
 def _load_models_cache() -> list[str]:
     try:
         if MODELS_CACHE_FILE.exists():
-            with open(MODELS_CACHE_FILE, "r") as f:
+            with open(MODELS_CACHE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return data.get("models", [])
     except Exception:
@@ -492,7 +492,7 @@ def _load_models_cache() -> list[str]:
 def _save_models_cache(models: list[str]):
     try:
         MODELS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(MODELS_CACHE_FILE, "w") as f:
+        with open(MODELS_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump({"models": models, "updated_at": time.time()}, f)
     except Exception:
         pass

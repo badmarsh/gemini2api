@@ -10,8 +10,13 @@ import json
 import time
 import hashlib
 import asyncio
+import logging
 from collections import OrderedDict
 from pathlib import Path
+
+from app.utils.atomic_io import atomic_write_json
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data")) / "conversations"
 MAX_CONVERSATIONS = 200
@@ -84,30 +89,35 @@ class ConversationStore:
         if not index_file.exists():
             return
         try:
-            with open(index_file, "r") as f:
+            with open(index_file, "r", encoding="utf-8") as f:
                 index = json.load(f)
-            for entry in index[-MAX_CONVERSATIONS:]:
+            entries = index[-MAX_CONVERSATIONS:]
+        except Exception as e:
+            logger.warning("conversation index %s is unreadable, starting empty: %s", index_file, e)
+            return
+        # Each conversation file is handled on its own: one bad file must not abort the rest.
+        for entry in entries:
+            try:
                 conv_file = DATA_DIR / f"{_safe_file_id(entry['id'])}.json"
-                if conv_file.exists():
-                    with open(conv_file, "r") as f:
-                        data = json.load(f)
-                    conv = Conversation.from_dict(data)
-                    if time.time() - conv.updated_at < MAX_AGE_SECONDS:
-                        self._conversations[conv.id] = conv
-        except Exception:
-            pass
+                if not conv_file.exists():
+                    continue
+                with open(conv_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                conv = Conversation.from_dict(data)
+                if time.time() - conv.updated_at < MAX_AGE_SECONDS:
+                    self._conversations[conv.id] = conv
+            except Exception as e:
+                logger.warning("skipping unreadable conversation entry %r: %s", entry, e)
 
     def _save_conversation(self, conv: Conversation):
         # 防路径穿越：用 conv.id 派生的安全文件名而非原始 id
         conv_file = DATA_DIR / f"{_safe_file_id(conv.id)}.json"
-        with open(conv_file, "w") as f:
-            json.dump(conv.to_dict(), f, ensure_ascii=False)
+        atomic_write_json(conv_file, conv.to_dict())
         self._save_index()
 
     def _save_index(self):
         index = [{"id": c.id, "updated_at": c.updated_at} for c in self._conversations.values()]
-        with open(DATA_DIR / "index.json", "w") as f:
-            json.dump(index, f)
+        atomic_write_json(DATA_DIR / "index.json", index)
 
     def _evict_old(self):
         now = time.time()
@@ -136,7 +146,12 @@ class ConversationStore:
         async with self._lock:
             self._conversations[conv.id] = conv
             self._conversations.move_to_end(conv.id)
-            self._save_conversation(conv)
+            # Persistence is best-effort: the in-memory state above is authoritative for this
+            # process, so a disk/encoding problem must never fail the API request.
+            try:
+                self._save_conversation(conv)
+            except (OSError, UnicodeError, ValueError) as e:
+                logger.warning("could not persist conversation %r: %s", conv.id, e)
 
     async def delete(self, conv_id: str):
         async with self._lock:

@@ -9,7 +9,7 @@ def load_env():
     env_file = Path('.env')
     if not env_file.exists():
         raise FileNotFoundError(".env file not found")
-    lines = env_file.read_text(encoding='utf-8').splitlines()
+    lines = env_file.read_text(encoding='utf-8-sig').splitlines()
     env = {}
     for line in lines:
         line = line.strip()

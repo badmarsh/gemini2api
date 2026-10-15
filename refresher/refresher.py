@@ -33,7 +33,7 @@ SINGLE_RUN = os.environ.get("SINGLE_RUN", "false").lower() == "true"
 def load_accounts():
     accounts_file = os.path.join(DATA_DIR, "refresher_accounts.json")
     if os.path.exists(accounts_file):
-        with open(accounts_file, "r") as f:
+        with open(accounts_file, "r", encoding="utf-8-sig") as f:
             return json.load(f)
 
     psid = os.environ.get("GEMINI_PSID", "")
@@ -52,7 +52,7 @@ def ensure_state_dir(account_id):
 def _state_psid(state_file):
     """Read current __Secure-1PSID in state.json to determine if credentials have rotated."""
     try:
-        with open(state_file, "r") as f:
+        with open(state_file, "r", encoding="utf-8") as f:
             state = json.load(f)
         for c in state.get("cookies", []):
             if c.get("name") == "__Secure-1PSID":
@@ -71,7 +71,7 @@ def inject_cookies_to_state(state_dir, psid, psidts):
     if psidts:
         cookies.append({"name": "__Secure-1PSIDTS", "value": psidts, "domain": ".google.com", "path": "/", "secure": True, "httpOnly": True, "sameSite": "None"})
     state = {"cookies": cookies, "origins": []}
-    with open(state_file, "w") as f:
+    with open(state_file, "w", encoding="utf-8") as f:
         json.dump(state, f)
     print(f"  [init] Injected cookies from config into state")
 
@@ -204,7 +204,7 @@ def refresh_all():
 
         browser.close()
 
-    with open(COOKIES_OUTPUT, "w") as f:
+    with open(COOKIES_OUTPUT, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
     active = [r for r in results if r.get("status") == "active"]

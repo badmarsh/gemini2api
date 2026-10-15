@@ -298,7 +298,7 @@ class PersistentCookieJar:
         digest = hashlib.sha256(self._account_id.encode()).hexdigest()[:16]
         legacy_path = legacy_dir / f"{digest}.txt"
         if legacy_path.exists():
-            psidts = legacy_path.read_text().strip()
+            psidts = legacy_path.read_text(encoding="utf-8").strip()
             if psidts:
                 logger.info("从旧缓存迁移 PSIDTS Cookie")
                 self._cookies["__Secure-1PSIDTS"] = StoredCookie(

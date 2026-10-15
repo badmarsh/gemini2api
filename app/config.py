@@ -155,7 +155,7 @@ def _persist_api_key():
         # 无 .env 时此前直接 return，导致自动生成的 key 从不持久化，每次重启都换新 key，
         # 静默失效所有客户端凭据（修复 #33）。这里创建 .env 并写入，使其跨重启存活。
         try:
-            env_path.write_text(f"API_KEY={settings.api_key}\n")
+            env_path.write_text(f"API_KEY={settings.api_key}\n", encoding="utf-8")
             logger.info(
                 f"API Key generated and saved to new .env: {mask_secret(settings.api_key)}"
             )
@@ -166,7 +166,7 @@ def _persist_api_key():
                 f"它会在重启后重新生成。请显式设置 API_KEY 环境变量。"
             )
         return
-    content = env_path.read_text()
+    content = env_path.read_text(encoding="utf-8-sig")
     if "API_KEY=" in content:
         for line in content.splitlines():
             if line.startswith("API_KEY="):
@@ -181,10 +181,10 @@ def _persist_api_key():
                 new_lines.append(f"API_KEY={settings.api_key}")
             else:
                 new_lines.append(line)
-        env_path.write_text("\n".join(new_lines) + "\n")
+        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     else:
         content = content.rstrip("\n") + f"\nAPI_KEY={settings.api_key}\n"
-        env_path.write_text(content)
+        env_path.write_text(content, encoding="utf-8")
     logger.info(f"API Key generated and saved to .env: {mask_secret(settings.api_key)}")
 
 
