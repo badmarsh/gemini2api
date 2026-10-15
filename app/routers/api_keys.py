@@ -115,7 +115,7 @@ async def set_fallback(req: FallbackToggleRequest):
         _rollback_persisted_files(((ENV_PATH, env_before), (overrides_path, overrides_before)))
         object.__setattr__(settings, "fallback_enabled", old)  # 回滚，避免内存改了盘没改
         logger.error(f"Failed to persist fallback toggle: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to persist fallback setting: {e}")
+        raise HTTPException(status_code=500, detail="Failed to persist fallback setting")
     return {"success": True, "enabled": req.enabled}
 
 

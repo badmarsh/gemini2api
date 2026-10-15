@@ -193,6 +193,22 @@ function startUptimeTimer(initialSeconds) {
     uptimeInterval = setInterval(update, 1000);
 }
 
+// Restart helpers. Kept small and dependency-free so the node tests can run them as-is.
+// Hide the button only when the backend says restart is unsupported (older backends keep it).
+function restartButtonVisible(sysInfo) {
+    return !(sysInfo && sysInfo.restart_supported === false);
+}
+
+// Run the restart request; never throws. On failure carries the real error message.
+async function requestRestart(call) {
+    try {
+        await call();
+        return { ok: true, message: '' };
+    } catch (e) {
+        return { ok: false, message: (e && e.message) ? String(e.message) : '' };
+    }
+}
+
 async function loadSystemInfo() {
     const data = await telemetryService.getSystemInfo();
     setText('sys-version', 'v' + data.version);
@@ -204,6 +220,8 @@ async function loadSystemInfo() {
     setText('sys-cpu', data.cpu_percent + '%');
     setText('sys-mode', data.run_mode);
     setText('sys-pid', data.pid);
+    const restartBtnEl = document.getElementById('restartBtn');
+    if (restartBtnEl) restartBtnEl.style.display = restartButtonVisible(data) ? '' : 'none';
     if (data.uptime_seconds !== undefined) {
         startUptimeTimer(data.uptime_seconds);
     }
@@ -1284,10 +1302,13 @@ function initEventListeners() {
             });
             if (!confirmed) return;
             restartBtn.classList.add('restarting');
+            const result = await requestRestart(() => apiCall('POST', '/admin/restart?confirm=true'));
+            if (!result.ok) {
+                restartBtn.classList.remove('restarting');
+                showToast(result.message || t('toast.error'), 'error');
+                return;
+            }
             showToast(t('toast.restarting'), 'success');
-            try {
-                await apiCall('POST', '/admin/restart?confirm=true');
-            } catch (e) {}
             setTimeout(() => {
                 const check = setInterval(async () => {
                     try {

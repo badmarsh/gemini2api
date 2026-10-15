@@ -118,6 +118,8 @@ async def system_info():
         "pid": os.getpid(),
         "run_mode": "Docker" if os.path.exists("/.dockerenv") else "Standalone",
         "uptime_seconds": uptime_seconds,
+        # The UI hides the restart button when this is False (restart answers 501 there).
+        "restart_supported": _restart_supported(),
     }
 
 

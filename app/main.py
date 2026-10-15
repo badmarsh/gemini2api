@@ -232,18 +232,23 @@ import re as _re
 
 # VULN-008：日志脱敏。避免 ?token=sk-xxx / 路径中出现的 key 进入结构化日志。
 _TOKEN_SCRUB_RE = _re.compile(r"(token=)[^&\s]+", _re.IGNORECASE)
-_SK_SCRUB_RE = _re.compile(r"sk-[A-Za-z0-9]{4,}")
+# The whole key token is masked: letters, digits, "-" and "_" (sk-ant-api03-..., sk-proj-...),
+# and the URL-encoded dash (sk%2D...) that shows up in query strings.
+_SK_SCRUB_RE = _re.compile(r"sk(?:-|%2[dD])(?:[A-Za-z0-9_-]|%2[dD]){4,}")
+# ?key=... / ?api_key=... / ?apikey=... / ?api-key=... values (Gemini-style key query parameter).
+_KEY_PARAM_SCRUB_RE = _re.compile(r"(\b(?:api[_-]?)?key=)[^&\s]+", _re.IGNORECASE)
 
 
 def _scrub_sensitive(text: str) -> str:
     if not text:
         return text
     scrubbed = _TOKEN_SCRUB_RE.sub(r"\1****", text)
+    scrubbed = _KEY_PARAM_SCRUB_RE.sub(r"\1****", scrubbed)
     return _SK_SCRUB_RE.sub("sk-****", scrubbed)
 
 
 class AccessLogScrubFilter(logging.Filter):
-    """Scrub secrets (?token=..., sk-... keys) from uvicorn access-log records.
+    """Scrub secrets (?token=..., ?key=..., sk-... keys) from uvicorn access-log records.
 
     uvicorn builds the access line from ``record.args`` =
     (client_addr, method, full_path, http_version, status_code); ``full_path`` includes the

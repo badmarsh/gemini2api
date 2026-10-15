@@ -55,8 +55,20 @@ def atomic_write_json(
     atomic_write_text(path, json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii))
 
 
+def _fsync_parent_dir(parent: Union[str, Path]) -> None:
+    """Best-effort fsync of a directory so a completed rename survives a crash (POSIX only)."""
+    try:
+        dfd = os.open(str(parent), os.O_DIRECTORY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except (OSError, AttributeError):
+        pass  # Windows has no O_DIRECTORY; durability is best effort
+
+
 def atomic_rewrite_text(path: Union[str, Path], data: str, encoding: str = "utf-8") -> None:
-    """Atomically rewrite a user-editable config file (``.env``), keeping its permissions.
+    """Rewrite a config file (``.env``) via temp file + rename, keeping its mode; NOT atomic in the in-place fallback.
 
     Unlike :func:`atomic_write_text` this is meant for files an operator may deliberately
     make read-only or bind-mount into a container:
@@ -67,7 +79,8 @@ def atomic_rewrite_text(path: Union[str, Path], data: str, encoding: str = "utf-
     * The data goes to a temp file next to the target (fsync, mode copied from the target),
       then ``os.replace`` swaps it in, so a crash never leaves a truncated file behind.
     * ``EBUSY`` / ``EXDEV`` from the swap (a single file bind-mounted into a container cannot
-      be renamed over) fall back to a direct in-place write.
+      be renamed over) fall back to a direct in-place write, which is NOT atomic.
+    * After a successful rename the parent directory is fsynced (best effort, POSIX only).
 
     Text is written with ``Path.write_text``, so newline translation matches the direct writes
     this replaces. A new file is created private (0600) by ``mkstemp``.
@@ -97,6 +110,8 @@ def atomic_rewrite_text(path: Union[str, Path], data: str, encoding: str = "utf-
             if e.errno not in (errno.EBUSY, errno.EXDEV):
                 raise
             target.write_text(data, encoding=encoding)
+        else:
+            _fsync_parent_dir(target.parent)
     finally:
         try:
             os.unlink(tmp)  # already gone after a successful os.replace
