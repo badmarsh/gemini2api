@@ -51,6 +51,12 @@ GOOGLE_WEB_ERROR_PHRASES = (
     "An error occurred. Please try again.",
     "I seem to be encountering an error. Can I try something else for you?",
     "I seem to be encountering an error",
+    "I'm having a hard time fulfilling your request. Can I help you with something else instead?",
+    "I'm having a hard time fulfilling your request",
+    "I am having a hard time fulfilling your request",
+    "Sure. First, I'll need your permission to turn on the Workspace app.",
+    "First, I'll need your permission to turn on the Workspace app",
+    "I'll need your permission to turn on the Workspace app",
 )
 
 # A reply is Google's error template only when it is one of those sentences on its own,
@@ -154,7 +160,14 @@ GEMINI_MODELS = {
 
 # 对外暴露的稳定模型名（永不变，API 契约）。客户端只认这 4 个，
 # 内部按账号当前真实可用的模型动态映射，账号订阅等级/Google 灰度怎么变都不影响 API。
-PUBLIC_MODELS = ["gemini-pro", "gemini-flash", "gemini-flash-thinking", "gemini-flash-lite", "gemini-4-argon"]
+PUBLIC_MODELS = [
+    "gemini-pro",
+    "gemini-flash",
+    "gemini-flash-thinking",
+    "gemini-flash-lite",
+    "gemini-4-argon",
+    "gemini-argon",
+]
 _PUBLIC_FAMILY = {
     "gemini-pro": "pro",
     "gemini-flash": "flash",
@@ -162,6 +175,10 @@ _PUBLIC_FAMILY = {
     "gemini-flash-lite": "flash-lite",
     "gemini-argon": "argon",
     "gemini-4-argon": "argon",
+    "argon": "argon",
+    "gemini4/gemini-4-argon": "argon",
+    "gemini4-argon": "argon",
+    "gemini-argon-4": "argon",
 }
 # 每个 family 的默认内部模型（账号没拉到真实模型时的兜底）。本池里 4 个账号都是
 # AI Pro：batchexecute 心跳返回 400 时 self._family_model 为空，兜底必须指向 Pro 档的
@@ -176,7 +193,11 @@ _FAMILY_DEFAULT = {
 
 MODEL_ALIASES = {
     # 旧版别名 → 公开名（再由公开名按账号动态解析），保留兼容
+    "argon": "gemini-4-argon",
     "gemini-argon": "gemini-4-argon",
+    "gemini4/gemini-4-argon": "gemini-4-argon",
+    "gemini4-argon": "gemini-4-argon",
+    "gemini-argon-4": "gemini-4-argon",
     "gemini-2.5-pro": "gemini-pro",
     "gemini-2.5-flash": "gemini-flash",
     "gemini-2.5-flash-thinking": "gemini-flash-thinking",

@@ -27,10 +27,10 @@ async def get_summary(request: Request):
 @router.get("/history")
 async def get_history(
     request: Request,
-    granularity: str = Query("hourly", regex="^(raw|five_min|hourly|daily)$"),
+    granularity: str = Query("hourly", pattern="^(raw|five_min|hourly|daily)$"),
     # hours 限定为 "all" 或正整数，避免非数字值（?hours=abc / 空 / 1.5）触发未捕获 ValueError → 500
     # （修复 #15/#26）。Query 的 regex 在到达处理函数前即返回 422。
-    hours: str = Query("24", regex=r"^(all|[1-9]\d*)$"),
+    hours: str = Query("24", pattern=r"^(all|[1-9]\d*)$"),
 ):
     store = getattr(request.app.state, "usage_stats_store", None)
     if store is None:

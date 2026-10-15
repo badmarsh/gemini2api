@@ -1,6 +1,7 @@
 import pytest
 from app.core.gemini_client import (
-    GoogleWebError, GOOGLE_WEB_ERROR_PHRASES, classify_error, GeminiWebClient
+    GoogleWebError, GOOGLE_WEB_ERROR_PHRASES, classify_error, GeminiWebClient,
+    _is_google_error_reply,
 )
 from app.core.account_pool import _is_retryable
 from app.utils.prompt import build_prompt_from_messages
@@ -24,6 +25,23 @@ def test_google_web_error_phrases_non_empty():
     for phrase in GOOGLE_WEB_ERROR_PHRASES:
         assert isinstance(phrase, str)
         assert len(phrase) > 5
+
+
+def test_is_google_error_reply_detection():
+    # Standard upstream error templates
+    assert _is_google_error_reply("Sorry, something went wrong. Please try your request again.") is True
+    assert _is_google_error_reply("I'm having a hard time fulfilling your request. Can I help you with something else instead?") is True
+    assert _is_google_error_reply("I seem to be encountering an error") is True
+    assert _is_google_error_reply("Something went wrong. Please try again. (Code: 12345)") is True
+    assert _is_google_error_reply("Sure. First, I'll need your permission to turn on the Workspace app.") is True
+    assert _is_google_error_reply("First, I'll need your permission to turn on the Workspace app") is True
+    
+    # Real replies that should NOT be detected as errors
+    assert _is_google_error_reply("Sure, 2 + 2 = 4.") is False
+    assert _is_google_error_reply("") is False
+    assert _is_google_error_reply(None) is False
+    # Multi-line text or detailed explanations must not be classified as errors
+    assert _is_google_error_reply("Sorry, something went wrong.\nHere is what happened...") is False
 
 
 def test_prompt_preserves_developer_and_multi_turn():

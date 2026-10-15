@@ -73,3 +73,32 @@ def test_parse_output_no_thoughts_empty():
     raw = ")]}'\n" + json.dumps([["wrb.fr", None, json.dumps(payload)]])
     out = c._parse_output(raw)
     assert out["thoughts"] == ""
+
+
+def test_argon_model_resolution_and_aliases():
+    from app.core.gemini_client import _resolve_model
+    assert _resolve_model("gemini-4-argon") == "gemini-4-argon"
+    assert _resolve_model("gemini-argon") == "gemini-4-argon"
+    assert _resolve_model("argon") == "gemini-4-argon"
+    assert _resolve_model("gemini4/gemini-4-argon") == "gemini-4-argon"
+    assert _resolve_model("gemini4-argon") == "gemini-4-argon"
+    assert _model_number("gemini-4-argon") == 8
+    assert _model_number("gemini4/gemini-4-argon") == 8
+    assert _model_number("argon") == 8
+
+
+def test_argon_payload_encoding():
+    c = GeminiWebClient.__new__(GeminiWebClient)
+    encoded, uuid_val = c._encode_payload_thinking("test argon", "gemini-4-argon", "", None, None)
+    outer = json.loads(encoded)
+    inner = json.loads(outer[1])
+    assert len(inner) == 81
+    assert inner[0] == ["test argon", 0, None, None, None, None, 0]
+    assert inner[79] == 8          # model_number for argon
+    assert inner[80] == 2          # extended thinking
+    
+    header = _build_model_header_thinking("gemini-4-argon", "SESSION-UUID")
+    arr = json.loads(header[MODEL_HEADER_KEY])
+    assert len(arr) == 15
+    assert arr[4] == "95a4c0abcba24364"  # argon model id
+

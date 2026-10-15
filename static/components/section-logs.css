@@ -48,7 +48,7 @@
     border: 1px solid var(--border-color, #e2e8f0);
     border-radius: var(--radius-lg, 8px);
     font-size: 0.85rem;
-    background: var(--card-bg, #fff);
+    background: var(--card-bg, var(--bg-primary, #fff));
     color: var(--text-primary, #1e293b);
     transition: var(--transition, all 0.2s);
 }
@@ -79,7 +79,7 @@
     overflow-x: auto;
     border: 1px solid var(--border-color, #e2e8f0);
     border-radius: var(--radius-xl, 12px);
-    background: var(--card-bg, #fff);
+    background: var(--card-bg, var(--bg-primary, #fff));
 }
 
 .logs-table {
@@ -95,7 +95,7 @@
     padding: 0.7rem 0.75rem;
     text-align: left;
     font-weight: 600;
-    color: var(--text-secondary, #64748b);
+    color: var(--text-secondary);
     border-bottom: 1px solid var(--border-color, #e2e8f0);
     white-space: nowrap;
     font-size: 0.75rem;
@@ -149,14 +149,14 @@
 
 .status-2xx { color: var(--success-color); }
 .status-3xx { color: var(--info-color); }
-.status-4xx { color: var(--warning-color); }
+.status-4xx { color: var(--warning-text, var(--warning-color)); }
 .status-5xx { color: var(--danger-color); }
 
 .logs-detail {
     width: 350px;
     border: 1px solid var(--border-color, #e2e8f0);
     border-radius: var(--radius-xl, 12px);
-    background: var(--card-bg, #fff);
+    background: var(--card-bg, var(--bg-primary, #fff));
     display: none;
     flex-direction: column;
     overflow: hidden;

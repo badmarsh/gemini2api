@@ -165,3 +165,52 @@ def test_responses_stream_with_tools_buffers_and_emits_function_call_done(gem_cl
         body = "".join(r.iter_text())
     assert "response.function_call_arguments.done" in body
     assert "response.completed" in body
+
+
+def test_responses_argon_models_accepted(gem_client, monkeypatch):
+    import app.routers.responses as rr
+
+    received_models = []
+    async def fake_generate(prompt, model, conversation_id="", attachments=None,
+                            gem_id=None, account_id=None, extended_thinking=False):
+        received_models.append(model)
+        return {"text": f"Argon reply for {model}", "conversation_id": "", "images": [], "thoughts": "my thoughts"}
+
+    monkeypatch.setattr(rr.gemini_client, "generate", fake_generate)
+
+    for m in ["gemini-4-argon", "gemini-argon", "argon", "gemini4/gemini-4-argon"]:
+        r = gem_client.post("/v1/responses", json={"model": m, "input": "hi"}, headers=_AUTH)
+        assert r.status_code == 200, f"Model {m} failed: {r.text}"
+        body = r.json()
+        assert body["status"] == "completed"
+        # Reasoning item should be in output
+        types = [item["type"] for item in body["output"]]
+        assert "reasoning" in types
+        assert "message" in types
+
+    assert len(received_models) == 4
+
+
+def test_responses_stream_accumulates_thoughts(gem_client, monkeypatch):
+    import app.routers.responses as rr
+
+    async def fake_generate_stream(prompt, model, conversation_id="", attachments=None,
+                                  gem_id=None, account_id=None, extended_thinking=False):
+        yield {"type": "thoughts", "text": "thought part 1; "}
+        yield {"type": "thoughts", "text": "thought part 2"}
+        yield {"type": "delta", "text": "answer text"}
+        yield {"type": "final", "text": "answer text", "images": []}
+
+    monkeypatch.setattr(rr.gemini_client, "generate_stream", fake_generate_stream)
+
+    with gem_client.stream("POST", "/v1/responses", json={
+        "model": "gemini4/gemini-4-argon", "input": "think and answer", "stream": True,
+    }, headers=_AUTH) as r:
+        body = "".join(r.iter_text())
+
+    assert "response.output_text.delta" in body
+    assert "answer text" in body
+    assert "response.completed" in body
+    # Final completed frame must contain the accumulated thoughts
+    assert "thought part 1; thought part 2" in body
+

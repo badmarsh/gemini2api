@@ -15,6 +15,7 @@
         :root {
             --primary-color: #059669;
             --primary-hover: #047857;
+            --btn-text: #ffffff;
             --bg-main: #f9fafb;
             --bg-card: #ffffff;
             --text-primary: #111827;
@@ -29,12 +30,16 @@
         }
 
         [data-theme="dark"] {
+            --primary-color: #34d399;
+            --primary-hover: #10b981;
+            --btn-text: #0b1f17;
             --bg-main: #0f172a;
             --bg-card: #1e293b;
             --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
+            --text-secondary: #cbd5e1;
             --border: #334155;
-            --error-bg: #7f1d1d;
+            --error: #fca5a5;
+            --error-bg: rgba(239, 68, 68, 0.15);
             --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
             --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
             --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
@@ -141,7 +146,7 @@
             padding: 0.875rem 1.5rem;
             font-size: 1rem;
             font-weight: 600;
-            color: white;
+            color: var(--btn-text, white);
             background: var(--primary-color);
             border: none;
             border-radius: 10px;
@@ -173,9 +178,14 @@
             width: 18px;
             height: 18px;
             border: 2px solid rgba(255, 255, 255, 0.3);
-            border-top-color: white;
+            border-top-color: currentColor;
             border-radius: 50%;
             animation: spin 0.6s linear infinite;
+        }
+
+        [data-theme="dark"] .spinner {
+            border-color: rgba(11, 31, 23, 0.3);
+            border-top-color: #0b1f17;
         }
 
         @keyframes spin {

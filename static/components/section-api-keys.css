@@ -159,12 +159,12 @@
 }
 
 .ak-status-active {
-    color: var(--success-color);
+    color: var(--success-text, var(--success-color));
     font-weight: 600;
 }
 
 .ak-status-disabled {
-    color: var(--danger-color);
+    color: var(--danger-text, var(--danger-color));
     font-weight: 600;
 }
 

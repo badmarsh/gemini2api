@@ -5,7 +5,7 @@
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra"
+addopts = "-ra --basetemp=.tmp_pytest"
 testpaths = ["tests"]
 # Put the repo root on sys.path so `import app...` resolves (namespace package).
 pythonpath = ["."]

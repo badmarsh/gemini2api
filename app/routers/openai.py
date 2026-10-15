@@ -480,7 +480,8 @@ async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv
     if has_tools or attachments or maybe_image_generation_intent(prompt):
         async for sse in _stream_response_buffered(
             prompt, model, has_tools, gemini_conv_id, conv, messages_raw,
-            model_name, completion_id, attachments, base_url, request, req, gem_id, account_id
+            model_name, completion_id, attachments, base_url, request, req, gem_id, account_id,
+            extended_thinking=extended_thinking,
         ):
             yield sse
         return
@@ -644,7 +645,7 @@ def _err_chunk(exc: Exception) -> str:
     return format_sse(chunk) + "data: [DONE]\n\n"
 
 
-async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, gemini_conv_id: str = "", conv=None, messages_raw=None, model_name: str = "", completion_id: str = "", attachments=None, base_url: str = "", request=None, req=None, gem_id=None, account_id=None) -> AsyncGenerator[str, None]:
+async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, gemini_conv_id: str = "", conv=None, messages_raw=None, model_name: str = "", completion_id: str = "", attachments=None, base_url: str = "", request=None, req=None, gem_id=None, account_id=None, extended_thinking: bool = False) -> AsyncGenerator[str, None]:
     """非流式收集 + 切片伪流式：用于有工具调用/附件、需要完整文本的场景。"""
     # 立即发出首帧 SSE，避免生图/工具路径在 generate() 阻塞期间零字节导致前置代理超时。
     first = StreamChunk(
@@ -653,11 +654,18 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
     )
     yield format_sse(first.model_dump())
 
-    async def _run_generate():
-        return await gemini_client.generate(prompt, model, gemini_conv_id, attachments,
+    async def _safe_generate(p: str, m: str, c_id: str):
+        if extended_thinking:
+            try:
+                return await gemini_client.generate(p, m, c_id, attachments,
+                                                    gem_id=gem_id, account_id=account_id,
+                                                    extended_thinking=True)
+            except TypeError:
+                pass
+        return await gemini_client.generate(p, m, c_id, attachments,
                                             gem_id=gem_id, account_id=account_id)
 
-    gen_task = asyncio.create_task(_run_generate())
+    gen_task = asyncio.create_task(_safe_generate(prompt, model, gemini_conv_id))
     try:
         async for ping in _sse_keepalive_during(gen_task):
             yield ping
@@ -672,10 +680,7 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
     except Exception as e:
         if gemini_conv_id and messages_raw:
             full_prompt = build_prompt_from_messages(messages_raw)
-            retry_task = asyncio.create_task(
-                gemini_client.generate(full_prompt, model, "", attachments,
-                                       gem_id=gem_id, account_id=account_id)
-            )
+            retry_task = asyncio.create_task(_safe_generate(full_prompt, model, ""))
             try:
                 async for ping in _sse_keepalive_during(retry_task):
                     yield ping
@@ -734,8 +739,7 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
     if has_tools:
         # 此刻只发过 role 首帧 + keepalive，还没发任何 content 块，重试是安全的。
         async def _regenerate_for_tools() -> str:
-            r = await gemini_client.generate(prompt, model, gemini_conv_id, attachments,
-                                             gem_id=gem_id, account_id=account_id)
+            r = await _safe_generate(prompt, model, gemini_conv_id)
             return r.get("text", "")
 
         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——这条流早就开了（role 首帧已发），

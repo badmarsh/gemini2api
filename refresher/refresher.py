@@ -12,7 +12,7 @@ import time
 import requests as http_requests
 from playwright.sync_api import sync_playwright
 
-DATA_DIR = "/app/data"
+DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 STATE_DIR = os.path.join(DATA_DIR, "browser_states")
 COOKIES_OUTPUT = os.path.join(DATA_DIR, "refreshed_cookies.json")
 GEMINI2API_URL = os.environ.get("GEMINI2API_URL", "http://gemini2api:5918")

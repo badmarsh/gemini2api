@@ -283,7 +283,11 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
             if _kind == "ping":
                 yield SSE_KEEPALIVE_FRAME
                 continue
-            if evt.get("type") == "delta":
+            if evt.get("type") == "thoughts":
+                t_delta = evt.get("text", "")
+                if t_delta:
+                    thoughts += t_delta
+            elif evt.get("type") == "delta":
                 delta = evt.get("text", "")
                 if delta:
                     streamed_any = True
@@ -297,7 +301,7 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
                         yield enc.text_delta(msg_id, 0, tail)
                 full_text = final_text
                 final_images = evt.get("images") or []
-                thoughts = evt.get("thoughts") or ""
+                thoughts = evt.get("thoughts") or thoughts
     except Exception as e:
         # 扩展思维链路径失败且尚未流出任何内容：退回非流式非思维链重试一次
         if extended_thinking and not streamed_any:

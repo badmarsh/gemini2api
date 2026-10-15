@@ -33,8 +33,12 @@
 
 .btn-group .btn.active {
     background: var(--primary-color);
-    color: #ffffff;
+    color: var(--btn-primary-text, #ffffff);
     border-color: var(--primary-color);
+}
+
+[data-theme="dark"] .btn-group .btn.active {
+    color: #0b1f17;
 }
 
 .chart-container {

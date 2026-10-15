@@ -463,7 +463,7 @@ async def index_page():
     return HTMLResponse("<h1>Panel not found</h1>", status_code=404)
 
 
-@app.api_route("/", methods=["GET", "HEAD"])
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root_page():
     """裸地址 ``/`` 是管理员实际打开/收藏的入口，必须和 /index.html 同样每次回源校验。
 

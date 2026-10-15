@@ -119,5 +119,5 @@
 }
 
 .gem-list-container .error {
-    color: var(--danger-color);
+    color: var(--danger-text, var(--danger-color));
 }

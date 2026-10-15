@@ -461,7 +461,9 @@ class AccountPool:
                                 account.active_requests += 1
                                 account.last_used = datetime.now(timezone.utc)
                                 return account
-                            raise RuntimeError("No available accounts")
+                            raise RuntimeError(
+                                NO_HEALTHY_ACCOUNT_MSG if self._accounts else "No available accounts"
+                            )
                         # H2（reviewer FIX_FIRST）：这里绝不能再调 _try_recover_expired()。
                         # F1 把 has_available_account 的判定收紧成"ACTIVE 且健康"后，池里
                         # 只要同时存在 EXPIRED 账号和 ACTIVE-但-不健康 账号，就会撞进这个分支；

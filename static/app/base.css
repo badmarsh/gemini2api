@@ -17,6 +17,7 @@
     --bg-secondary: #f8fafc;
     --bg-tertiary: #f1f5f9;
     --bg-glass: rgba(255, 255, 255, 0.8);
+    --card-bg: var(--bg-primary);
 
     /* Text Colors */
     --text-primary: #0f172a;
@@ -66,9 +67,13 @@
     --info-border: rgba(59, 130, 246, 0.2);
     --info-text: #1d4ed8;
     --success-bg: rgba(16, 185, 129, 0.1);
-    --success-text: #059669;
+    --success-text: #047857;
+    --warning-text: #b45309;
     --danger-bg: rgba(239, 68, 68, 0.1);
     --danger-text: #dc2626;
+
+    /* Button Text Colors */
+    --btn-primary-text: #ffffff;
 
     /* Code Blocks and Log Area */
     --code-bg: #1e1e1e;
@@ -90,10 +95,11 @@
     --bg-tertiary: #334155;
     --bg-glass: rgba(30, 41, 59, 0.85);
     --bg-glass-strong: rgba(15, 23, 42, 0.95);
+    --card-bg: var(--bg-primary);
 
     --text-primary: #f1f5f9;
-    --text-secondary: #94a3b8;
-    --text-tertiary: #64748b;
+    --text-secondary: #cbd5e1;
+    --text-tertiary: #94a3b8;
 
     --border-color: #334155;
     --border-hover: #475569;
@@ -125,8 +131,11 @@
 
     --success-bg: rgba(52, 211, 153, 0.1);
     --success-text: #6ee7b7;
+    --warning-text: #fde68a;
     --danger-bg: rgba(248, 113, 113, 0.1);
     --danger-text: #fca5a5;
+
+    --btn-primary-text: #0b1f17;
 }
 
 /* Base Styles */
@@ -254,22 +263,22 @@ body {
 
 .stat-icon.success {
     background: var(--success-10);
-    color: var(--success-color);
+    color: var(--success-text, var(--success-color));
 }
 
 .stat-icon.warning {
     background: var(--warning-15);
-    color: var(--warning-color);
+    color: var(--warning-text, var(--warning-color));
 }
 
 .stat-icon.danger {
     background: var(--danger-10);
-    color: var(--danger-color);
+    color: var(--danger-text, var(--danger-color));
 }
 
 .stat-icon.info {
     background: var(--info-10);
-    color: var(--info-color);
+    color: var(--info-text, var(--info-color));
 }
 
 .stat-info {
@@ -364,7 +373,7 @@ body {
 
 .btn-primary {
     background: var(--primary-color);
-    color: #ffffff;
+    color: var(--btn-primary-text, #ffffff);
 }
 
 .btn-primary:hover {
@@ -402,7 +411,7 @@ body {
 
 .btn-success {
     background: var(--success-color);
-    color: #fff;
+    color: var(--btn-primary-text, #ffffff);
     border-color: var(--success-color);
 }
 
@@ -493,22 +502,22 @@ textarea.form-control {
 
 .badge-success {
     background: var(--success-10);
-    color: var(--success-color);
+    color: var(--success-text, var(--success-color));
 }
 
 .badge-danger {
     background: var(--danger-10);
-    color: var(--danger-color);
+    color: var(--danger-text, var(--danger-color));
 }
 
 .badge-warning {
     background: var(--warning-15);
-    color: var(--warning-color);
+    color: var(--warning-text, var(--warning-color));
 }
 
 .badge-info {
     background: var(--info-10);
-    color: var(--info-color);
+    color: var(--info-text, var(--info-color));
 }
 
 .badge-secondary {
@@ -789,7 +798,7 @@ tr:hover {
 }
 
 .log-level-warn {
-    color: var(--warning-color);
+    color: var(--warning-text, var(--warning-color));
 }
 
 .log-level-debug {
@@ -865,7 +874,7 @@ tr:hover {
 }
 
 .text-warning {
-    color: var(--warning-color);
+    color: var(--warning-text, var(--warning-color));
 }
 
 .hidden {

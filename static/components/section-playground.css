@@ -117,7 +117,7 @@
 
 .chat-message.user .chat-avatar {
     background: var(--primary-color);
-    color: white;
+    color: var(--btn-primary-text, white);
 }
 
 .chat-message.assistant .chat-avatar {
@@ -148,7 +148,7 @@
 
 .chat-message.user .chat-bubble {
     background: var(--primary-color);
-    color: white;
+    color: var(--btn-primary-text, white);
     border-top-right-radius: 4px;
 }
 
@@ -216,6 +216,11 @@
 
 [data-theme="dark"] .chat-message.user .chat-bubble {
     background: var(--primary-color);
+    color: #0b1f17;
+}
+
+[data-theme="dark"] .chat-message.user .chat-avatar {
+    color: #0b1f17;
 }
 
 /* Image Upload */
