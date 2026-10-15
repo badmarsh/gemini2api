@@ -79,6 +79,17 @@ FIELD_TYPES = {
     "log_bodies_enabled": bool,
 }
 
+# Runtime toggles that have their own dedicated switch outside the settings panel. They are
+# persisted and replayed like panel fields (a real env var from compose would otherwise win
+# after a restart) but stay out of EDITABLE_FIELDS: that set drives the panel and
+# POST /admin/settings, and listing them there would duplicate the toggle.
+RUNTIME_TOGGLE_TYPES = {
+    "fallback_enabled": bool,
+}
+
+# Everything save_overrides() may write and apply_overrides() may replay.
+PERSISTABLE_FIELDS = EDITABLE_FIELDS | set(RUNTIME_TOGGLE_TYPES)
+
 # 这些字段语义上是计数/间隔，必须为非负（其中并发上限至少为 1）。
 NON_NEGATIVE_FIELDS = {
     "refresh_interval",
@@ -114,7 +125,7 @@ def coerce_value(key: str, value: Any) -> Tuple[bool, Any]:
     接受 int 并转成 float。bool 是 int 的子类但语义完全不同，对 int/float 字段必须
     显式拒绝，否则 JSON ``true`` 会被当成合法数字写进配置、破坏下次启动。
     """
-    expected = FIELD_TYPES.get(key)
+    expected = FIELD_TYPES.get(key, RUNTIME_TOGGLE_TYPES.get(key))
     if expected is None:
         return False, value
     if expected in (int, float) and isinstance(value, bool):
@@ -162,14 +173,14 @@ def load_overrides(path: _PathLike = None) -> Dict[str, Any]:
     if not isinstance(data, dict):
         logger.warning(f"Ignoring settings overrides at {target}: expected a JSON object")
         return {}
-    return {k: v for k, v in data.items() if k in EDITABLE_FIELDS}
+    return {k: v for k, v in data.items() if k in PERSISTABLE_FIELDS}
 
 
 def save_overrides(updates: Dict[str, Any], path: _PathLike = None) -> None:
     """把面板改动合并进持久化文件（原子写）。只接受白名单内字段。"""
     target = _resolve(path)
     merged = load_overrides(target)
-    accepted = {k: v for k, v in updates.items() if k in EDITABLE_FIELDS}
+    accepted = {k: v for k, v in updates.items() if k in PERSISTABLE_FIELDS}
     if not accepted:
         return
     merged.update(accepted)

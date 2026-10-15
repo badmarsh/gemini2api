@@ -9,7 +9,14 @@ from pydantic import BaseModel
 from app.core.api_key_store import ApiKeyPool, PROVIDER_CATALOG
 from app.utils.net_guard import assert_safe_url, UnsafeURLError
 from app.config import settings
-from app.routers.settings import _update_env_file
+from app.core import settings_overrides
+from app.core.settings_overrides import save_overrides
+from app.routers.settings import (
+    ENV_PATH,
+    _read_file_snapshot,
+    _rollback_persisted_files,
+    _update_env_file,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin/api-keys", tags=["API Keys"])
@@ -90,9 +97,22 @@ async def set_fallback(req: FallbackToggleRequest):
     仅影响"兜底"，不影响第三方直连与 /v1/models。"""
     old = bool(getattr(settings, "fallback_enabled", False))
     object.__setattr__(settings, "fallback_enabled", req.enabled)
+    # Persist to the overrides file too: under compose env_file a real env var beats .env,
+    # so the toggle would revert after a restart. All-or-nothing, like POST /admin/settings.
+    overrides_path = settings_overrides.OVERRIDES_PATH
     try:
+        overrides_before = _read_file_snapshot(overrides_path)
+        env_before = _read_file_snapshot(ENV_PATH)
+    except Exception as e:
+        # No snapshot means no safe rollback, so do not touch the disk at all.
+        object.__setattr__(settings, "fallback_enabled", old)
+        logger.error(f"Failed to snapshot settings files for the fallback toggle: {e}")
+        raise HTTPException(status_code=500, detail="Failed to persist fallback setting")
+    try:
+        save_overrides({"fallback_enabled": req.enabled})
         _update_env_file({"fallback_enabled": req.enabled})
     except Exception as e:
+        _rollback_persisted_files(((ENV_PATH, env_before), (overrides_path, overrides_before)))
         object.__setattr__(settings, "fallback_enabled", old)  # 回滚，避免内存改了盘没改
         logger.error(f"Failed to persist fallback toggle: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to persist fallback setting: {e}")

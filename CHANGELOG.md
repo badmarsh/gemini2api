@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixed
 - `.env` robustness on Windows: a UTF-8 BOM at the start of the file (added by Notepad or PowerShell 5.1) no longer breaks the first key, and unknown keys (for example those used by the refresher, which shares the file) no longer crash startup. Startup logs one warning listing the unknown key names (never values) so typos are still noticed.
+- The Gemini-to-third-party fallback toggle (`PATCH /admin/api-keys/fallback`) is now persisted in `data/settings-overrides.json`, like the settings panel fields. Under Docker Compose `env_file` the real environment variable beat the container-local `.env`, so the toggle silently reverted after a restart. The write is all-or-nothing: if any layer fails, memory and files are restored.
 
 ---
 
