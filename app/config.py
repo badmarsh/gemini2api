@@ -4,7 +4,7 @@ import secrets
 import logging
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 
 from app.core.settings_overrides import apply_overrides
@@ -133,9 +133,14 @@ class Settings(BaseSettings):
             raise ValueError("PORT must be between 1 and 65535")
         return v
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    # utf-8-sig: Windows editors (Notepad, PowerShell 5.1 Out-File) prepend a BOM that would
+    # otherwise glue itself onto the first key. extra="ignore": the .env file is shared with
+    # other components (e.g. the refresher), so unknown keys must not crash the gateway.
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8-sig",
+        extra="ignore",
+    )
 
 
 settings = Settings()
@@ -145,6 +150,38 @@ settings = Settings()
 # 放到 lifespan 里回放就晚了。启动日志由 app/main.py 的 lifespan 打印（那时 logging
 # 才配置完），运维排查"改了 .env 为什么不生效"时能一眼看到被覆盖的字段。
 APPLIED_OVERRIDES = apply_overrides(settings)
+
+
+_ENV_KEY_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=")
+
+
+def warn_unknown_env_keys(env_path=".env") -> list[str]:
+    """Log one warning naming the .env keys that match no Settings field; return them sorted.
+
+    Only key NAMES are logged, never values. Unknown keys are harmless (extra="ignore"),
+    but a misspelled setting would otherwise be dropped silently. Never raises: a missing
+    or undecodable file just yields an empty list.
+    """
+    try:
+        text = Path(env_path).read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        return []
+    known = {name.lower() for name in Settings.model_fields}
+    unknown = set()
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        m = _ENV_KEY_RE.match(line)
+        if m and m.group(1).lower() not in known:
+            unknown.add(m.group(1))
+    result = sorted(unknown)
+    if result:
+        logger.warning(
+            "Ignoring unknown keys in .env: %s (keys used by other components such as "
+            "the refresher are fine; otherwise check for typos)",
+            ", ".join(result),
+        )
+    return result
 
 
 _API_KEY_LINE_RE = re.compile(r"^\s*(?:export\s+)?API_KEY\s*=(.*)$")

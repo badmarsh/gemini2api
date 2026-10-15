@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file. The format 
 ### Security
 - `/docs`, `/redoc` and `/openapi.json` are now disabled by default (404). FastAPI serves them without checking the API key, and they listed every route including the admin API. Set `DOCS_ENABLED=true` to bring them back; they stay unauthenticated, so use it for local development only.
 
+### Fixed
+- `.env` robustness on Windows: a UTF-8 BOM at the start of the file (added by Notepad or PowerShell 5.1) no longer breaks the first key, and unknown keys (for example those used by the refresher, which shares the file) no longer crash startup. Startup logs one warning listing the unknown key names (never values) so typos are still noticed.
+
 ---
 
 ## [1.7.1] - 2026-10-14 (badmarsh/gemini2api v1.7.1)

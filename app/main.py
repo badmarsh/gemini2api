@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from app.config import settings, APP_VERSION, mask_secret, APPLIED_OVERRIDES
+from app.config import settings, APP_VERSION, mask_secret, APPLIED_OVERRIDES, warn_unknown_env_keys
 from app.core.settings_overrides import OVERRIDES_PATH
 from app.core.account_pool import account_pool
 from app.core.auth import verify_api_key, verify_admin_key
@@ -65,6 +65,8 @@ async def lifespan(app: FastAPI):
             OVERRIDES_PATH,
             ", ".join(f"{k}={v}" for k, v in sorted(APPLIED_OVERRIDES.items())),
         )
+    # Logging is configured by now; flag misspelled keys that the shared .env would hide.
+    warn_unknown_env_keys()
     await account_pool.initialize()
 
     app.state.log_store = LogStore()
