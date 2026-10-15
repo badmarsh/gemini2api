@@ -214,3 +214,27 @@ def test_responses_stream_accumulates_thoughts(gem_client, monkeypatch):
     # Final completed frame must contain the accumulated thoughts
     assert "thought part 1; thought part 2" in body
 
+
+def test_responses_stream_with_tools_emits_text_deltas(gem_client, monkeypatch):
+    import app.routers.responses as rr
+
+    async def fake_generate(prompt, model, conversation_id="", attachments=None,
+                            gem_id=None, account_id=None, extended_thinking=False):
+        return {"text": "direct answer with tools enabled", "images": []}
+
+    monkeypatch.setattr(rr.gemini_client, "generate", fake_generate)
+
+    with gem_client.stream("POST", "/v1/responses", json={
+        "model": "gemini4/gemini-4-argon",
+        "input": "hello with tools",
+        "tools": [{"type": "function", "name": "shell", "description": "run shell"}],
+        "stream": True,
+    }, headers=_AUTH) as r:
+        body = "".join(r.iter_text())
+
+    assert "response.output_text.delta" in body
+    assert "direct answer with tools enabled" in body
+    assert "response.output_text.done" in body
+    assert "response.completed" in body
+
+

@@ -14,7 +14,7 @@ from app.core.gemini_client import GEMINI_MODELS, _resolve_model
 from app.core.responses_protocol import (
     parse_responses_input, build_responses_object, new_response_id, ResponsesStreamEncoder,
 )
-from app.core.stream import iter_with_keepalive, SSE_KEEPALIVE_FRAME, sse_keepalive_during
+from app.core.stream import iter_with_keepalive, SSE_KEEPALIVE_FRAME, sse_keepalive_during, split_into_chunks
 from app.routers.openai import _images_to_markdown
 from app.utils.tools import build_tool_prompt, parse_tool_response_with_retry, estimate_tokens
 from app.utils.prompt import build_prompt_from_messages, extract_attachments
@@ -257,6 +257,9 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
                 for frame in enc.text_message_start(msg_id, idx):
                     yield frame
                 full_text = item["content"][0]["text"]
+                if full_text:
+                    async for chunk in split_into_chunks(full_text, delay=0.005):
+                        yield enc.text_delta(msg_id, idx, chunk)
                 for frame in enc.text_message_end(msg_id, idx, full_text):
                     yield frame
         usage = {"input_tokens": estimate_tokens(prompt), "output_tokens": estimate_tokens(text)}
