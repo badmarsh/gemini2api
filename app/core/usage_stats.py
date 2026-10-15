@@ -114,7 +114,8 @@ class UsageStatsStore:
             tmp = self._file_path.with_suffix(".tmp")
             payload = {"version": 1, "baseline": self._baseline, "snapshots": self._snapshots}
             tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            tmp.rename(self._file_path)
+            # replace(), not rename(): rename() raises FileExistsError on Windows once the file exists.
+            tmp.replace(self._file_path)
         except Exception as e:
             logger.error(f"[UsageStats] Save failed: {e}")
 
