@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 _IMAGE_DOWNLOAD_TIMEOUT = 25  # 单次 GET 超时（秒），避免 =s0 全分辨率拖垮整条链路
 _IMAGE_SIZE_DEFAULT = "=s2048"  # 2048px 边长足够预览，字节/耗时远小于 =s0
-_GENERATE_TIMEOUT_DEFAULT = 180  # 普通对话 POST 超时（Argon/pro 深度思考常需 >60s）
+_GENERATE_TIMEOUT_DEFAULT = 180  # 普通对话 POST 超时（pro 深度思考常需 >60s）
 _GENERATE_TIMEOUT_IMAGE = 180  # 生图 POST 超时（pro 常 >60s，flash 通常 <60s）
+_GENERATE_TIMEOUT_ARGON = 360  # Argon 深度思考（mandatory test-time extended thinking）POST 超时
 
 
 class HTTPStatusError(Exception):
@@ -1418,7 +1419,8 @@ class GeminiWebClient:
         last_thoughts = ""       # 累积思维链（最新一帧的完整思考文本，final 兜底用）
         emitted_thoughts = ""    # 已 yield 出去的思维链前缀（逐帧增量用）
         last_images: list = []
-        chunk_timeout = 120      # 单个 chunk 最长等待（兜底 #215 timeout 失效）
+        chunk_timeout = 240 if "argon" in resolved else 120      # 单个 chunk 最长等待（兜底 #215 timeout 失效）
+        stream_timeout = _GENERATE_TIMEOUT_ARGON if "argon" in resolved else 180
 
         # Warm shared session: at/bl/f.sid were minted on self._http in
         # _obtain_session_token, so the POST must ride that same HTTP/2
@@ -1431,7 +1433,7 @@ class GeminiWebClient:
                 "POST", GENERATE_URL,
                 params=self._stream_generate_params(),
                 data={"at": self._session_token, "f.req": encoded}, cookies=cookies, headers=headers,
-                timeout=180,
+                timeout=stream_timeout,
             ) as resp:
                 try:
                     if resp.status_code >= 400:
@@ -1587,7 +1589,8 @@ class GeminiWebClient:
         headers["x-goog-ext-525005358-jspb"] = f'["{str(uuid.uuid4()).upper()}",1]'
 
         gen_timeout = (
-            _GENERATE_TIMEOUT_IMAGE if maybe_image_generation_intent(prompt)
+            _GENERATE_TIMEOUT_ARGON if "argon" in resolved
+            else _GENERATE_TIMEOUT_IMAGE if maybe_image_generation_intent(prompt)
             else _GENERATE_TIMEOUT_DEFAULT
         )
         # Warm shared session: at/bl/f.sid were minted on self._http in
