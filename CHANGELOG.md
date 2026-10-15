@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file. The format 
 ### Fixed
 - `.env` robustness on Windows: a UTF-8 BOM at the start of the file (added by Notepad or PowerShell 5.1) no longer breaks the first key, and unknown keys (for example those used by the refresher, which shares the file) no longer crash startup. Startup logs one warning listing the unknown key names (never values) so typos are still noticed.
 - The Gemini-to-third-party fallback toggle (`PATCH /admin/api-keys/fallback`) is now persisted in `data/settings-overrides.json`, like the settings panel fields. Under Docker Compose `env_file` the real environment variable beat the container-local `.env`, so the toggle silently reverted after a restart. The write is all-or-nothing: if any layer fails, memory and files are restored.
+- Text encoding is now explicit everywhere (`utf-8-sig` when reading hand-edited files, `utf-8` when writing), so the app no longer depends on the Windows locale code page. Persistence is hardened against bad files: conversation history is written atomically and loaded file by file, and a corrupt `accounts.json` is moved to `accounts.json.corrupt-<YYYYmmdd-HHMMSS>` before the pool starts empty instead of being silently overwritten.
+- Usage statistics snapshots kept failing on Windows because `Path.rename` raises `FileExistsError` when the target exists; they now use `replace`, so persistence works there.
+- An auto-generated API key is now persisted when `.env` has no exact `API_KEY=` line (for example only `ADMIN_API_KEY=`, an `export` prefix, or an empty value). The file is parsed line by line and "saved" is only logged after the write succeeded.
 
 ---
 
