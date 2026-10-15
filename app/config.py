@@ -1,3 +1,4 @@
+import re
 import string
 import secrets
 import logging
@@ -143,6 +144,26 @@ settings = Settings()
 APPLIED_OVERRIDES = apply_overrides(settings)
 
 
+_API_KEY_LINE_RE = re.compile(r"^\s*(?:export\s+)?API_KEY\s*=(.*)$")
+
+
+def _api_key_line_value(line: str):
+    """Return the value of an exact ``API_KEY=`` line in a .env file, or None for any other line.
+
+    Matches only the exact key name (so ADMIN_API_KEY= is not mistaken for it), allows an
+    ``export`` prefix and surrounding whitespace, and treats quoted-empty values as empty.
+    """
+    m = _API_KEY_LINE_RE.match(line)
+    if not m:
+        return None
+    value = m.group(1).strip()
+    if value[:1] in ("'", '"'):
+        quote = value[0]
+        end = value.find(quote, 1)
+        return value[1:end] if end != -1 else value[1:]
+    return value.split(" #", 1)[0].strip() if not value.startswith("#") else ""
+
+
 def _persist_api_key():
     # 仅当 API_KEY 未由真实环境变量显式提供（即本次为自动生成）时才落盘，
     # 避免覆盖运维通过 env 注入的固定 key。
@@ -166,25 +187,24 @@ def _persist_api_key():
                 f"它会在重启后重新生成。请显式设置 API_KEY 环境变量。"
             )
         return
-    content = env_path.read_text(encoding="utf-8-sig")
-    if "API_KEY=" in content:
-        for line in content.splitlines():
-            if line.startswith("API_KEY="):
-                val = line.split("=", 1)[1].strip()
-                if val:
-                    return
-    if "API_KEY=" in content:
+    try:
+        content = env_path.read_text(encoding="utf-8-sig")
         lines = content.splitlines()
-        new_lines = []
-        for line in lines:
-            if line.startswith("API_KEY="):
-                new_lines.append(f"API_KEY={settings.api_key}")
-            else:
-                new_lines.append(line)
-        env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    else:
-        content = content.rstrip("\n") + f"\nAPI_KEY={settings.api_key}\n"
-        env_path.write_text(content, encoding="utf-8")
+        api_key_lines = [i for i, line in enumerate(lines) if _api_key_line_value(line) is not None]
+        if any(_api_key_line_value(lines[i]) for i in api_key_lines):
+            return  # a real value is already stored
+        if api_key_lines:
+            for i in api_key_lines:  # only empty API_KEY= lines: fill them in place
+                lines[i] = f"API_KEY={settings.api_key}"
+            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        else:
+            env_path.write_text(content.rstrip("\n") + f"\nAPI_KEY={settings.api_key}\n", encoding="utf-8")
+    except Exception as e:
+        logger.warning(
+            f"API Key generated but could NOT be persisted (.env unwritable: {e}); "
+            "it will be regenerated after restart. Set the API_KEY environment variable explicitly."
+        )
+        return
     logger.info(f"API Key generated and saved to .env: {mask_secret(settings.api_key)}")
 
 
