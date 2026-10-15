@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.config import APP_VERSION, mask_secret
 from app.core.account_pool import account_pool, AccountStatus
+from app.core.gemini_client import GeminiWebClient
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
