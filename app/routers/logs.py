@@ -50,6 +50,13 @@ async def clear_logs(request: Request):
     return {"ok": True}
 
 
+@router.delete("")
+async def delete_logs(request: Request):
+    store = get_store(request)
+    store.clear()
+    return {"ok": True}
+
+
 @router.get("/{record_id}")
 async def get_log_record(request: Request, record_id: str):
     store = get_store(request)

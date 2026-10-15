@@ -96,6 +96,13 @@ class Settings(BaseSettings):
     # 属隐私 + 体积敏感，只有运维明确需要排障时才开。开启后也只记 body、绝不记任何
     # 请求头（Authorization 等凭据不进日志），且流式响应只记一个标记、绝不缓冲整个流。
     log_bodies_enabled: bool = False
+    # Argon 兜底至 Gemini Flash 3.8 High（带思考链）。
+    # 当 Argon 失败/超时/无可用账号/报错/返回空时，自动无缝降级为 Gemini Flash 3.8 High（默认开）。
+    argon_fallback_to_flash: bool = True
+    # 强制将所有 Argon 请求直接由 Gemini Flash 3.8 High 提供（跳过 Argon 尝试，默认关）。
+    argon_always_fallback: bool = False
+    # Argon 兜底目标模型名（默认 gemini-flash-thinking 即 Gemini 3.8 Flash High）。
+    argon_fallback_model: str = "gemini-flash-thinking"
 
     @field_validator("gemini_psid")
     @classmethod

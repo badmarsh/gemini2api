@@ -238,3 +238,106 @@ def test_responses_stream_with_tools_emits_text_deltas(gem_client, monkeypatch):
     assert "response.completed" in body
 
 
+def test_responses_argon_fallback_to_flash_on_error(gem_client, monkeypatch):
+    import app.routers.responses as rr
+
+    calls = []
+    async def fake_generate(prompt, model, conversation_id="", attachments=None,
+                            gem_id=None, account_id=None, extended_thinking=False):
+        calls.append((model, extended_thinking))
+        if "argon" in model.lower():
+            raise RuntimeError("Argon unavailable / timeout")
+        return {"text": "Flash 3.8 High fallback answer", "thoughts": "deep thought", "images": []}
+
+    monkeypatch.setattr(rr.gemini_client, "generate", fake_generate)
+
+    r = gem_client.post("/v1/responses", json={
+        "model": "gemini4/gemini-4-argon",
+        "input": "test prompt",
+    }, headers=_AUTH)
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "completed"
+    assert data["output"][-1]["content"][0]["text"] == "Flash 3.8 High fallback answer"
+    # Verify Argon was attempted first, then fallback to gemini-flash-thinking with thinking=True
+    assert len(calls) == 2
+    assert "argon" in calls[0][0].lower()
+    assert calls[1][0] == "gemini-flash-thinking"
+    assert calls[1][1] is True
+
+
+def test_responses_argon_stream_buffered_fallback_on_error(gem_client, monkeypatch):
+    import app.routers.responses as rr
+
+    calls = []
+    async def fake_generate(prompt, model, conversation_id="", attachments=None,
+                            gem_id=None, account_id=None, extended_thinking=False):
+        calls.append((model, extended_thinking))
+        if "argon" in model.lower():
+            raise RuntimeError("Argon stream timeout")
+        return {"text": "Flash fallback buffered stream", "images": []}
+
+    monkeypatch.setattr(rr.gemini_client, "generate", fake_generate)
+
+    with gem_client.stream("POST", "/v1/responses", json={
+        "model": "gemini4/gemini-4-argon",
+        "input": "test stream",
+        "tools": [{"type": "function", "name": "run"}],
+        "stream": True,
+    }, headers=_AUTH) as r:
+        body = "".join(r.iter_text())
+
+    assert "Flash fallback buffered stream" in body
+    assert "response.completed" in body
+    assert len(calls) >= 2
+    assert "argon" in calls[0][0].lower()
+    assert calls[1][0] == "gemini-flash-thinking"
+
+
+def test_responses_argon_always_fallback_setting(gem_client, monkeypatch):
+    import app.routers.responses as rr
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "argon_always_fallback", True)
+
+    calls = []
+    async def fake_generate(prompt, model, conversation_id="", attachments=None,
+                            gem_id=None, account_id=None, extended_thinking=False):
+        calls.append(model)
+        return {"text": "Direct Flash answer without trying Argon", "images": []}
+
+    monkeypatch.setattr(rr.gemini_client, "generate", fake_generate)
+
+    r = gem_client.post("/v1/responses", json={
+        "model": "gemini4/gemini-4-argon",
+        "input": "hello",
+    }, headers=_AUTH)
+
+    assert r.status_code == 200
+    assert len(calls) == 1
+    assert calls[0] == "gemini-flash-thinking"
+
+
+def test_responses_gemini_38_flash_high_alias(gem_client, monkeypatch):
+    import app.routers.responses as rr
+
+    captured_args = {}
+    async def fake_generate(prompt, model, conversation_id="", attachments=None,
+                            gem_id=None, account_id=None, extended_thinking=False):
+        captured_args["model"] = model
+        captured_args["extended_thinking"] = extended_thinking
+        return {"text": "Gemini 3.8 Flash High response", "thoughts": "deep thoughts", "images": []}
+
+    monkeypatch.setattr(rr.gemini_client, "generate", fake_generate)
+
+    for m in ["gemini-3.8-flash-high", "gemini/gemini-3.8-flash-high", "gemini-flash-3.8-high"]:
+        r = gem_client.post("/v1/responses", json={
+            "model": m,
+            "input": "hello",
+        }, headers=_AUTH)
+        assert r.status_code == 200
+        assert captured_args["model"] == "gemini-flash-thinking"
+        assert captured_args["extended_thinking"] is True
+
+

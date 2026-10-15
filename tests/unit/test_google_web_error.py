@@ -35,6 +35,8 @@ def test_is_google_error_reply_detection():
     assert _is_google_error_reply("Something went wrong. Please try again. (Code: 12345)") is True
     assert _is_google_error_reply("Sure. First, I'll need your permission to turn on the Workspace app.") is True
     assert _is_google_error_reply("First, I'll need your permission to turn on the Workspace app") is True
+    assert _is_google_error_reply("I can't use Google Docs because required Gmail settings are off. Turn on these settings to continue.") is True
+    assert _is_google_error_reply("I can't use Google Drive because required Gmail settings are off. Turn on these settings to continue.") is True
     
     # Real replies that should NOT be detected as errors
     assert _is_google_error_reply("Sure, 2 + 2 = 4.") is False

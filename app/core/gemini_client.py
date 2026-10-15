@@ -58,13 +58,22 @@ GOOGLE_WEB_ERROR_PHRASES = (
     "Sure. First, I'll need your permission to turn on the Workspace app.",
     "First, I'll need your permission to turn on the Workspace app",
     "I'll need your permission to turn on the Workspace app",
+    "I can't use Google Docs because required Gmail settings are off. Turn on these settings to continue.",
+    "I can't use Google Drive because required Gmail settings are off. Turn on these settings to continue.",
+    "I can't use Gmail because required Gmail settings are off. Turn on these settings to continue.",
+    "I can't use Google Docs",
+    "I can't use Google Drive",
+    "I can't use Gmail",
+    "I can't use Google Workspace",
+    "I can't use the Workspace app",
+    "Turn on these settings to continue",
 )
 
 # A reply is Google's error template only when it is one of those sentences on its own,
 # plus at most a short single-line tail such as an error code. A real answer that merely
 # begins with the same words (e.g. a user asking for sample error copy) is longer or
 # spans several lines.
-_ERROR_TEMPLATE_MAX_TAIL = 60
+_ERROR_TEMPLATE_MAX_TAIL = 90
 
 
 def _is_google_error_reply(text: str) -> bool:
@@ -168,6 +177,9 @@ PUBLIC_MODELS = [
     "gemini-flash-lite",
     "gemini-4-argon",
     "gemini-argon",
+    "gemini-3.8-flash-high",
+    "gemini-3.8-flash",
+    "gemini-3.1-pro-high",
 ]
 _PUBLIC_FAMILY = {
     "gemini-pro": "pro",
@@ -180,6 +192,19 @@ _PUBLIC_FAMILY = {
     "gemini4/gemini-4-argon": "argon",
     "gemini4-argon": "argon",
     "gemini-argon-4": "argon",
+    "gemini-3.8-flash-high": "flash-thinking",
+    "gemini/gemini-3.8-flash-high": "flash-thinking",
+    "gemini-3.8-flash-thinking": "flash-thinking",
+    "gemini/gemini-3.8-flash-thinking": "flash-thinking",
+    "gemini-flash-3.8-high": "flash-thinking",
+    "gemini-3.8-flash": "flash",
+    "gemini/gemini-3.8-flash": "flash",
+    "gemini-3.1-pro-high": "pro",
+    "gemini/gemini-3.1-pro-high": "pro",
+    "gemini-3.1-pro": "pro",
+    "gemini/gemini-3.1-pro": "pro",
+    "gemini-3-pro-high": "pro",
+    "gemini/gemini-3-pro-high": "pro",
 }
 # 每个 family 的默认内部模型（账号没拉到真实模型时的兜底）。本池里 4 个账号都是
 # AI Pro：batchexecute 心跳返回 400 时 self._family_model 为空，兜底必须指向 Pro 档的
@@ -199,6 +224,19 @@ MODEL_ALIASES = {
     "gemini4/gemini-4-argon": "gemini-4-argon",
     "gemini4-argon": "gemini-4-argon",
     "gemini-argon-4": "gemini-4-argon",
+    "gemini-3.8-flash-high": "gemini-flash-thinking",
+    "gemini/gemini-3.8-flash-high": "gemini-flash-thinking",
+    "gemini-3.8-flash-thinking": "gemini-flash-thinking",
+    "gemini/gemini-3.8-flash-thinking": "gemini-flash-thinking",
+    "gemini-flash-3.8-high": "gemini-flash-thinking",
+    "gemini-3.8-flash": "gemini-flash",
+    "gemini/gemini-3.8-flash": "gemini-flash",
+    "gemini-3.1-pro-high": "gemini-pro",
+    "gemini/gemini-3.1-pro-high": "gemini-pro",
+    "gemini-3.1-pro": "gemini-pro",
+    "gemini/gemini-3.1-pro": "gemini-pro",
+    "gemini-3-pro-high": "gemini-pro",
+    "gemini/gemini-3-pro-high": "gemini-pro",
     "gemini-2.5-pro": "gemini-pro",
     "gemini-2.5-flash": "gemini-flash",
     "gemini-2.5-flash-thinking": "gemini-flash-thinking",
@@ -1686,54 +1724,68 @@ class GeminiWebClient:
             return None
 
     def _parse_output(self, raw: str) -> dict:
-        lines = raw.strip().split("\n")
         text_content = ""
         thoughts_content = ""
         conv_id = ""
         images: list[dict] = []
 
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith(")]}'"):
-                continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(data, list):
-                continue
-
-            for item in data:
-                if not isinstance(item, list) or len(item) < 3:
-                    continue
-                raw_payload = item[2]
-                if not isinstance(raw_payload, str):
+        # 优先使用完整的 wrb.fr 括号深度扫描（对换行符、分块切断完全免疫）
+        frames, _ = _scan_complete_wrb_frames(raw)
+        if frames:
+            for elem in frames:
+                text, conv, thoughts = _extract_text_from_wrb(elem)
+                if text is not None:
+                    text_content = text
+                if conv:
+                    conv_id = conv
+                if thoughts:
+                    thoughts_content = thoughts
+                imgs = self._images_from_wrb(elem)
+                if imgs:
+                    images = imgs
+        else:
+            lines = raw.strip().split("\n")
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith(")]}'"):
                     continue
                 try:
-                    payload = json.loads(raw_payload)
-                except (json.JSONDecodeError, TypeError):
+                    data = json.loads(line)
+                except json.JSONDecodeError:
                     continue
-                if not isinstance(payload, list) or len(payload) < 5:
+                if not isinstance(data, list):
                     continue
 
-                candidates = payload[4]
-                if not isinstance(candidates, list) or not candidates:
-                    continue
-                candidate = candidates[0]
-                if isinstance(candidate, list) and len(candidate) > 1:
-                    parts = candidate[1]
-                    if isinstance(parts, list) and parts and isinstance(parts[0], str):
-                        text_content = parts[0]
-                    if len(candidate) > 37 and isinstance(candidate[37], list) and candidate[37] \
-                            and isinstance(candidate[37][0], list) and candidate[37][0] \
-                            and isinstance(candidate[37][0][0], str):
-                        thoughts_content = candidate[37][0][0]
-                # AI 生成图片：candidate[12][7][0] 是图片数组（实测确认）
-                imgs = self._extract_generated_images(candidate)
-                if imgs:
-                    images = imgs  # 生图是流式响应，用含图的最新帧
-                if payload[1]:
-                    conv_id = str(payload[1])
+                for item in data:
+                    if not isinstance(item, list) or len(item) < 3:
+                        continue
+                    raw_payload = item[2]
+                    if not isinstance(raw_payload, str):
+                        continue
+                    try:
+                        payload = json.loads(raw_payload)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if not isinstance(payload, list) or len(payload) < 5:
+                        continue
+
+                    candidates = payload[4]
+                    if not isinstance(candidates, list) or not candidates:
+                        continue
+                    candidate = candidates[0]
+                    if isinstance(candidate, list) and len(candidate) > 1:
+                        parts = candidate[1]
+                        if isinstance(parts, list) and parts and isinstance(parts[0], str):
+                            text_content = parts[0]
+                        if len(candidate) > 37 and isinstance(candidate[37], list) and candidate[37] \
+                                and isinstance(candidate[37][0], list) and candidate[37][0] \
+                                and isinstance(candidate[37][0][0], str):
+                            thoughts_content = candidate[37][0][0]
+                    imgs = self._extract_generated_images(candidate)
+                    if imgs:
+                        images = imgs
+                    if payload[1]:
+                        conv_id = str(payload[1])
 
         # 生图/找图时模型文本里会带 googleusercontent 占位 URL（无实际意义，真图在 images 里；
         # image_retrieval/image_collection 是检索占位客户端访问无效），无条件过滤，避免显示成网址

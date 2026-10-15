@@ -363,6 +363,13 @@ async def log_capture_middleware(request: Request, call_next):
                 stream = body.get("stream")
         except Exception:
             pass
+    if not model and "/models/" in path:
+        try:
+            model_part = path.split("/models/", 1)[-1].split(":")[0]
+            if model_part:
+                model = model_part
+        except Exception:
+            pass
 
     error_msg = None
     if status >= 400:

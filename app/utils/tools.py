@@ -174,6 +174,8 @@ def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
             "When the user request requires taking actions, inspecting files, executing commands, "
             "or gathering information that can be obtained via tools, you MUST call the appropriate tool(s) "
             "rather than replying with plain text or explanations alone. "
+            "Do NOT attempt to use Google Workspace extensions, Google Docs, Drive, or Gmail. "
+            "Never ask for permission to turn on Workspace apps. "
         )
 
     system_block = (
@@ -349,6 +351,16 @@ def parse_tool_response(text: str) -> dict:
         r = _try_parse(candidate)
         if r:
             return r
+
+    # 3b. 尝试最外层大括号提取（防内层嵌套引号破坏深度扫描）
+    start_brace = stripped.find("{")
+    end_brace = stripped.rfind("}")
+    if start_brace != -1 and end_brace > start_brace:
+        outer_candidate = stripped[start_brace:end_brace + 1]
+        if outer_candidate != candidate:
+            r = _try_parse(outer_candidate)
+            if r:
+                return r
 
     # 4. 都失败：判断是否是「残缺/畸形的工具调用 JSON」——若是，不把垃圾透传给客户端
     looks_like_tool = ('"tool_use"' in text or '"tool_calls"' in text

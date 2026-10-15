@@ -160,3 +160,36 @@ def test_realstream_error_still_tries_fallback_before_error_frame(gem_client, mo
 
     assert "fallback content" in body
     assert not _error_frames(body)   # 兜底命中就不该再落到错误帧
+
+
+def test_buffered_stream_with_tools_emits_index_in_tool_calls(gem_client, monkeypatch):
+    import app.routers.openai as oai
+
+    tool_json = '{"status": "tool_use", "tool_calls": [{"name": "get_weather", "arguments": {"location": "Bratislava"}}]}'
+
+    async def fake_generate(prompt, model, conversation_id="", attachments=None,
+                            gem_id=None, account_id=None, extended_thinking=False):
+        return {"text": tool_json, "images": []}
+
+    monkeypatch.setattr(oai.gemini_client, "generate", fake_generate)
+
+    with gem_client.stream("POST", "/v1/chat/completions", json={
+        "model": "gemini4/gemini-4-argon",
+        "messages": [{"role": "user", "content": "What is the weather?"}],
+        "tools": [{"type": "function", "function": {"name": "get_weather"}}],
+        "stream": True,
+    }, headers=_AUTH) as r:
+        body = "".join(r.iter_text())
+
+    sse_items = _parse_sse(body)
+    tool_call_chunks = [
+        item[1] for item in sse_items
+        if item[0] == "data" and isinstance(item[1], dict)
+        and item[1].get("choices") and item[1]["choices"][0].get("delta", {}).get("tool_calls")
+    ]
+    assert len(tool_call_chunks) >= 1
+    tc = tool_call_chunks[0]["choices"][0]["delta"]["tool_calls"][0]
+    assert tc.get("index") == 0
+    assert tc.get("function", {}).get("name") == "get_weather"
+    assert "Bratislava" in tc.get("function", {}).get("arguments", "")
+

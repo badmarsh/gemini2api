@@ -34,6 +34,9 @@ class LogRecord:
     def matches_search(self, query: str) -> bool:
         q = query.lower()
         searchable = [
+            self.id,
+            self.request_id,
+            self.direction,
             self.path,
             self.method,
             self.model or "",

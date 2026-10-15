@@ -114,7 +114,7 @@ async def system_info():
         "memory_total": total_mem // (1024 * 1024),
         "cpu_percent": psutil.cpu_percent(interval=0.1),
         "pid": os.getpid(),
-        "run_mode": "Docker" if os.path.exists("/.dockerenv") else "直接运行",
+        "run_mode": "Docker" if os.path.exists("/.dockerenv") else "Standalone",
         "uptime_seconds": uptime_seconds,
     }
 

@@ -55,10 +55,10 @@ export const APP_CONSTANTS = deepFreeze({
         ADMIN_API_KEYS_CATALOG: '/admin/api-keys/catalog',
         ADMIN_GEMS: '/admin/gems',
         ADMIN_LOGS: '/admin/logs',
-        ADMIN_LOG_RECORD: '/admin/logs/records',
+        ADMIN_LOG_RECORD: '/admin/logs',
         ADMIN_SETTINGS: '/admin/settings',
         ADMIN_USAGE_SUMMARY: '/admin/usage-stats/summary',
-        ADMIN_USAGE_HOURLY: '/admin/usage-stats/hourly',
+        ADMIN_USAGE_HOURLY: '/admin/usage-stats/history',
         ADMIN_CHECK_UPDATE: '/admin/check-update',
         CHAT_COMPLETIONS: '/openai/v1/chat/completions',
         MODELS: '/openai/v1/models'

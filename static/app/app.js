@@ -7,7 +7,7 @@ import { initThemeSwitcher } from './theme-switcher.js';
 import { initAuth, apiCall, logout } from './auth.js';
 import { showToast, formatNumber, getStatusBadge, maskString, copyToClipboard, showConfirm, formatDate } from './utils.js';
 import { initUsageStats, loadUsageStats } from './usage-chart.js';
-import { initLogs } from './logs.js';
+import { initLogs, loadLogs } from './logs.js';
 import { initSettings, loadSettings } from './settings.js';
 import { initApiKeys, loadApiKeys } from './api-keys.js';
 import { initGems, loadAccountsThenGems } from './gems.js';
@@ -116,6 +116,7 @@ async function loadSectionData(sectionId) {
                 await loadUsageStats();
                 break;
             case 'logs':
+                await loadLogs();
                 break;
             case 'settings':
                 await loadSettings();

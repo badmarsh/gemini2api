@@ -4,7 +4,8 @@
  */
 
 import { apiCall } from './auth.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, showToast } from './utils.js';
+import { t } from './i18n.js';
 import { APP_CONSTANTS } from './config/constants.js';
 import { RingBuffer } from './services/telemetryService.js';
 
@@ -36,6 +37,7 @@ function initLogControls() {
             btn.classList.add('active');
             currentDirection = btn.dataset.value;
             currentOffset = 0;
+            consecutiveErrors = 0;
             loadLogs();
         });
     });
@@ -48,8 +50,17 @@ function initLogControls() {
             debounce = setTimeout(() => {
                 currentSearch = searchInput.value.trim();
                 currentOffset = 0;
+                consecutiveErrors = 0;
                 loadLogs();
             }, 300);
+        });
+    }
+
+    const refreshBtn = document.getElementById('log-refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            consecutiveErrors = 0;
+            loadLogs();
         });
     }
 
@@ -68,6 +79,7 @@ function initLogControls() {
         prevBtn.addEventListener('click', () => {
             if (currentOffset >= PAGE_SIZE) {
                 currentOffset -= PAGE_SIZE;
+                consecutiveErrors = 0;
                 loadLogs();
             }
         });
@@ -77,6 +89,7 @@ function initLogControls() {
     if (nextBtn) {
         nextBtn.addEventListener('click', () => {
             currentOffset += PAGE_SIZE;
+            consecutiveErrors = 0;
             loadLogs();
         });
     }
@@ -93,7 +106,7 @@ function startPolling() {
         const logsSection = document.getElementById('logs');
         const isSectionActive = logsSection ? logsSection.classList.contains('active') : true;
         if (!isPaused && document.visibilityState === 'visible' && isSectionActive && consecutiveErrors < 5) {
-            loadLogs();
+            loadLogs(false);
         }
     }, POLL_INTERVAL);
 }
@@ -111,9 +124,6 @@ function stopPolling() {
 
 function togglePause() {
     isPaused = !isPaused;
-    if (!isPaused) {
-        consecutiveErrors = 0; // Reset circuit breaker
-    }
     const btn = document.getElementById('log-toggle-btn');
     if (btn) {
         const icon = btn.querySelector('i');
@@ -121,19 +131,30 @@ function togglePause() {
             icon.className = isPaused ? 'fas fa-play' : 'fas fa-pause';
         }
     }
+    if (!isPaused) {
+        consecutiveErrors = 0; // Reset circuit breaker
+        loadLogs();
+    }
 }
 
 async function clearLogs() {
     try {
         await apiCall('POST', '/admin/logs/clear');
         clientLogBuffer.clear();
+        currentOffset = 0;
+        closeDetail();
+        showToast(t('logs.clear') || 'Logs cleared', 'success');
         loadLogs();
     } catch (_) {
         // Silently handled without leaking raw traces
     }
 }
 
-async function loadLogs() {
+export async function loadLogs(resetCircuitBreaker = true) {
+    if (resetCircuitBreaker) {
+        consecutiveErrors = 0;
+    }
+
     // Abort any prior in-flight fetch
     if (inFlightController) {
         inFlightController.abort();
@@ -156,11 +177,17 @@ async function loadLogs() {
 
         consecutiveErrors = 0;
 
+        const total = data.total || 0;
+        if (currentOffset >= total && total > 0) {
+            currentOffset = Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE;
+            return loadLogs(false);
+        }
+
         const records = data.records || [];
         clientLogBuffer.pushMany(records);
 
         renderTable(records);
-        renderPagination(data.total || 0, data.offset || 0);
+        renderPagination(total, currentOffset);
     } catch (e) {
         if (e.name !== 'AbortError') {
             consecutiveErrors++;
@@ -184,29 +211,44 @@ function renderTable(records) {
     if (empty) empty.style.display = 'none';
 
     tbody.innerHTML = records.map(r => {
-        const t = new Date(r.ts);
-        const time = t.toLocaleTimeString();
-        const dirLabel = r.direction === 'ingress' ? (t('logs.ingress') || 'Ingress') : (t('logs.egress') || 'Egress');
-        const dirClass = 'badge-' + r.direction;
+        const recordDate = r.ts ? new Date(r.ts) : null;
+        const time = recordDate && !isNaN(recordDate.getTime())
+            ? recordDate.toLocaleTimeString()
+            : (r.ts || '-');
+        const dirLabel = r.direction === 'ingress'
+            ? (t('logs.ingress') || 'Ingress')
+            : r.direction === 'egress'
+            ? (t('logs.egress') || 'Egress')
+            : (r.direction || '-');
+        const dirClass = 'badge-' + (r.direction || 'ingress');
         const statusClass = getStatusClass(r.status);
-        const latency = r.latency_ms ? Math.round(r.latency_ms) + 'ms' : '-';
+        const latency = (r.latency_ms !== null && r.latency_ms !== undefined)
+            ? Math.round(r.latency_ms) + 'ms'
+            : '-';
         const selected = r.id === selectedRecordId ? ' selected' : '';
+        const fullTime = r.ts || '';
+        const fullPath = String(r.path ?? '');
+        const fullModel = String(r.model ?? '-');
 
         return '<tr class="log-row' + selected + '" data-id="' + escapeHtml(String(r.id ?? '')) + '">'
-            + '<td>' + escapeHtml(time) + '</td>'
+            + '<td title="' + escapeHtml(fullTime) + '">' + escapeHtml(time) + '</td>'
             + '<td><span class="badge ' + dirClass + '">' + escapeHtml(dirLabel) + '</span></td>'
             + '<td>' + escapeHtml(String(r.method ?? '')) + '</td>'
-            + '<td>' + escapeHtml(truncatePath(r.path)) + '</td>'
+            + '<td title="' + escapeHtml(fullPath) + '">' + escapeHtml(truncatePath(r.path)) + '</td>'
             + '<td><span class="status-code ' + statusClass + '">' + escapeHtml(String(r.status ?? '-')) + '</span></td>'
             + '<td>' + escapeHtml(latency) + '</td>'
-            + '<td>' + escapeHtml(String(r.model ?? '-')) + '</td>'
+            + '<td title="' + escapeHtml(fullModel) + '">' + escapeHtml(fullModel) + '</td>'
             + '</tr>';
     }).join('');
 
     tbody.querySelectorAll('.log-row').forEach(row => {
         row.addEventListener('click', () => {
             const id = row.dataset.id;
-            selectRecord(id);
+            if (selectedRecordId === id) {
+                closeDetail();
+            } else {
+                selectRecord(id);
+            }
         });
     });
 }
@@ -228,9 +270,13 @@ function truncatePath(path) {
 function renderPagination(total, offset) {
     const info = document.getElementById('log-page-info');
     if (info) {
-        const start = total > 0 ? offset + 1 : 0;
-        const end = Math.min(offset + PAGE_SIZE, total);
-        info.textContent = start + '-' + end + ' of ' + total;
+        if (total === 0) {
+            info.textContent = '0-0 of 0';
+        } else {
+            const start = offset + 1;
+            const end = Math.min(offset + PAGE_SIZE, total);
+            info.textContent = start + '-' + end + ' of ' + total;
+        }
     }
 
     const prevBtn = document.getElementById('log-prev-btn');
@@ -252,7 +298,10 @@ async function selectRecord(id) {
         });
         showDetail(record);
     } catch (_) {
-        // Handled silently
+        const buffered = clientLogBuffer.getItems().find(r => String(r.id) === String(id));
+        if (buffered) {
+            showDetail(buffered);
+        }
     }
 }
 
@@ -268,14 +317,21 @@ function sanitizeRecordForDisplay(rec) {
         }
     };
 
-    if (clone.headers) {
-        ['authorization', 'cookie', 'x-api-key'].forEach(k => {
-            if (clone.headers[k]) clone.headers[k] = '[REDACTED_HEADER]';
-        });
-    }
-    maskKey(clone, 'api_key');
-    maskKey(clone, 'psid');
-    maskKey(clone, 'psidts');
+    const sanitizeObj = (obj) => {
+        if (!obj || typeof obj !== 'object') return;
+        if (obj.headers && typeof obj.headers === 'object') {
+            ['authorization', 'cookie', 'x-api-key'].forEach(k => {
+                if (obj.headers[k]) obj.headers[k] = '[REDACTED_HEADER]';
+            });
+        }
+        maskKey(obj, 'api_key');
+        maskKey(obj, 'psid');
+        maskKey(obj, 'psidts');
+        if (obj.request && typeof obj.request === 'object') sanitizeObj(obj.request);
+        if (obj.response && typeof obj.response === 'object') sanitizeObj(obj.response);
+    };
+
+    sanitizeObj(clone);
     return clone;
 }
 

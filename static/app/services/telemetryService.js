@@ -123,7 +123,7 @@ export class TelemetryService {
      * Clear server logs and reset local ring buffer
      */
     async clearLogs(signal = null) {
-        const result = await apiCall('DELETE', APP_CONSTANTS.ROUTES.ADMIN_LOGS, null, {
+        const result = await apiCall('POST', `${APP_CONSTANTS.ROUTES.ADMIN_LOGS}/clear`, null, {
             signal,
             timeout: APP_CONSTANTS.TIMEOUTS.API_DEFAULT
         });
