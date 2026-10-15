@@ -137,43 +137,136 @@ async function loadSectionData(sectionId) {
 // Dashboard
 // ============================================================================
 
-async function loadDashboard() {
-    const data = await telemetryService.getAdminStatus();
-    const accounts = data.accounts || [];
+// Pure: reduce the two settled dashboard requests to a plain view-model (never throws).
+function settleDashboardResults(statusRes, sysRes) {
+    const errorOf = (r) => (r.status === 'rejected')
+        ? ((r.reason && r.reason.message) ? String(r.reason.message) : 'Unknown error')
+        : '';
+    return {
+        status: statusRes.status === 'fulfilled' ? statusRes.value : null,
+        statusError: errorOf(statusRes),
+        sys: sysRes.status === 'fulfilled' ? sysRes.value : null,
+        sysError: errorOf(sysRes),
+    };
+}
 
-    const activeCount = accounts.filter(a => a.status === 'active').length;
-    const totalRequests = accounts.reduce((sum, a) => sum + (a.request_count || 0), 0);
-    const modelsSet = new Set();
-    accounts.forEach(a => {
-        if (a.models && Array.isArray(a.models)) {
-            a.models.forEach(m => modelsSet.add(m));
+// Pure: should the periodic dashboard refresh run right now?
+function shouldAutoRefresh(s) {
+    if (!s) return false;
+    return s.activeSection === 'dashboard' && !s.hidden && !s.inFlight
+        && (s.now - s.lastLoadAt) >= s.intervalMs;
+}
+
+// Per-card error notice: shown when only one of the dashboard requests failed, so the other
+// card group keeps working. An empty message removes the notice.
+function setDashboardCardError(key, message) {
+    const section = document.getElementById('dashboard');
+    if (!section) return;
+    const id = 'dashboard-card-error-' + key;
+    const old = document.getElementById(id);
+    if (old) old.remove();
+    if (!message) return;
+    const el = document.createElement('div');
+    el.id = id;
+    el.className = 'dashboard-card-error';
+    el.setAttribute('role', 'alert');
+    const text = document.createElement('span');
+    text.textContent = t('dashboard.error.' + key) + ': ' + message;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm';
+    btn.textContent = t('dashboard.retry');
+    btn.addEventListener('click', () => loadSectionData('dashboard'));
+    el.append(text, btn);
+    section.prepend(el);
+}
+
+let _dashboardLoading = false;
+let _dashboardLastLoadAt = 0;
+
+async function loadDashboard(opts) {
+    const background = !!(opts && opts.background === true);
+    _dashboardLoading = true;
+    try {
+        // The requests are independent: run them in parallel, and let one failing leave the
+        // other card group intact. QR cards are static, so a background refresh skips them.
+        const qrPromise = background ? Promise.resolve() : loadQrCards();
+        const [statusRes, sysRes] = await Promise.allSettled([
+            telemetryService.getAdminStatus(),
+            telemetryService.getSystemInfo(),
+        ]);
+        const view = settleDashboardResults(statusRes, sysRes);
+        if (!view.status && !view.sys && !background) {
+            // Nothing could be loaded: fall through to the section error boundary (with retry).
+            throw new Error(view.statusError);
         }
-    });
+        setDashboardCardError('status', view.statusError);
+        setDashboardCardError('system', view.sysError);
 
-    setText('stat-total', formatNumber(accounts.length));
-    setText('stat-active', formatNumber(activeCount));
-    setText('stat-requests', formatNumber(totalRequests));
-    setText('stat-models', formatNumber(modelsSet.size || accounts.reduce((s, a) => s + (a.models_count || 0), 0)));
+        if (view.status) {
+            const data = view.status;
+            const accounts = data.accounts || [];
 
-    const strategyMap = { 'round-robin': t('settings.strategy.roundRobin'), 'least-used': t('settings.strategy.leastUsed'), 'failover': t('settings.strategy.failover') };
-    setText('info-strategy', strategyMap[data.strategy] || data.strategy);
-    setText('info-concurrent', data.max_concurrent_per_account || '-');
-    setText('info-total-accounts', accounts.length);
-    setText('info-active-accounts', activeCount);
+            const activeCount = accounts.filter(a => a.status === 'active').length;
+            const totalRequests = accounts.reduce((sum, a) => sum + (a.request_count || 0), 0);
+            const modelsSet = new Set();
+            accounts.forEach(a => {
+                if (a.models && Array.isArray(a.models)) {
+                    a.models.forEach(m => modelsSet.add(m));
+                }
+            });
 
-    renderAccountStatusGrid(accounts);
-    renderModelsList(modelsSet);
-    updatePlaygroundModels(modelsSet);
-    await loadSystemInfo();
-    await loadQrCards();
+            setText('stat-total', formatNumber(accounts.length));
+            setText('stat-active', formatNumber(activeCount));
+            setText('stat-requests', formatNumber(totalRequests));
+            setText('stat-models', formatNumber(modelsSet.size || accounts.reduce((s, a) => s + (a.models_count || 0), 0)));
 
-    // Bind and auto-check update button (must be after DOM is loaded)
-    const updateBtn = document.getElementById('checkUpdateBtn');
-    if (updateBtn && !updateBtn._bound) {
-        updateBtn._bound = true;
-        updateBtn.addEventListener('click', handleCheckUpdate);
-        checkForUpdate();
+            const strategyMap = { 'round-robin': t('settings.strategy.roundRobin'), 'least-used': t('settings.strategy.leastUsed'), 'failover': t('settings.strategy.failover') };
+            setText('info-strategy', strategyMap[data.strategy] || data.strategy);
+            setText('info-concurrent', data.max_concurrent_per_account || '-');
+            setText('info-total-accounts', accounts.length);
+            setText('info-active-accounts', activeCount);
+
+            renderAccountStatusGrid(accounts);
+            renderModelsList(modelsSet);
+            updatePlaygroundModels(modelsSet);
+        }
+        if (view.sys) applySystemInfo(view.sys);
+        await qrPromise;
+
+        // Bind and auto-check update button (must be after DOM is loaded)
+        const updateBtn = document.getElementById('checkUpdateBtn');
+        if (updateBtn && !updateBtn._bound) {
+            updateBtn._bound = true;
+            updateBtn.addEventListener('click', handleCheckUpdate);
+            checkForUpdate();
+        }
+    } finally {
+        _dashboardLoading = false;
+        _dashboardLastLoadAt = Date.now();
     }
+}
+
+const DASHBOARD_REFRESH_MS = 30000;
+const DASHBOARD_REFRESH_CHECK_MS = 5000;
+let _dashboardRefreshTimer = null;
+
+// Background refresh: runs only while the dashboard is the active section and the browser tab is
+// visible. A tab that was hidden catches up within one check interval after it becomes visible.
+function startDashboardAutoRefresh() {
+    if (_dashboardRefreshTimer) return;
+    _dashboardRefreshTimer = setInterval(() => {
+        const active = document.querySelector('.section.active');
+        if (shouldAutoRefresh({
+            activeSection: active ? active.id : '',
+            hidden: document.hidden,
+            inFlight: _dashboardLoading,
+            lastLoadAt: _dashboardLastLoadAt,
+            now: Date.now(),
+            intervalMs: DASHBOARD_REFRESH_MS,
+        })) {
+            loadDashboard({ background: true }).catch(() => {});
+        }
+    }, DASHBOARD_REFRESH_CHECK_MS);
 }
 
 let uptimeInterval = null;
@@ -209,8 +302,7 @@ async function requestRestart(call) {
     }
 }
 
-async function loadSystemInfo() {
-    const data = await telemetryService.getSystemInfo();
+function applySystemInfo(data) {
     setText('sys-version', 'v' + data.version);
     setText('sys-ver-detail', 'v' + data.version);
     setText('sys-python', data.python_version);
@@ -1384,6 +1476,7 @@ async function initApp() {
     initApiKeys();
     initGems();
     initLightbox();
+    startDashboardAutoRefresh();
 }
 
 // Expose functions for onclick handlers

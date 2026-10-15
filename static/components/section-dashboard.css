@@ -507,3 +507,18 @@
 .qr-img:hover {
     transform: scale(1.05);
 }
+
+/* Per-card load error notice (dashboard v2) */
+.dashboard-card-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid var(--danger-color, #ef4444);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
