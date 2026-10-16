@@ -17,7 +17,7 @@ import pytest
 
 from evals.fake_upstream import scenarios as sc
 from evals.harness import InProcessSUT
-from evals.runner import RequestSpec, run_request
+from evals.runner import RequestSpec, is_silent_empty, run_request
 
 MODEL = "gemini-4-argon"
 FLASH_TEXT = "flash fallback reply"
@@ -42,6 +42,20 @@ NOT_APPLICABLE = {("hang_after_first", True)}  # content already streamed: see t
 # History: F1 (non-stream timeout escaped the router's except tuple -> 500, no Flash) and F2 (empty Argon
 # stream skipped the Flash step) were fixed on this branch; their cases now run as plain assertions.
 KNOWN_GAPS: dict = {}
+
+# Open defects of the fallback-OFF contract (``test_fallback_off_never_a_silent_empty_success``), same xfail idea.
+# These cases used to pass VACUOUSLY: the assertion required ``error_class == ""`` together with empty content, but
+# ``classify`` reports empty content as "empty_result", so it could never fire. With ``is_silent_empty`` it does.
+SILENT_EMPTY_REASON = (
+    "argon_fallback_to_flash off: an Argon reply with no text is returned as HTTP 200 with empty content. "
+    "app/routers/openai.py only turns a Google web-error TEXT into an error (the `is_empty_result(result) or "
+    "is_err_text` block); an empty result falls through to a normal completion."
+)
+KNOWN_GAPS_FALLBACK_OFF: dict = {
+    (name, stream): SILENT_EMPTY_REASON
+    for name in ("empty_reply", "no_frames", "cookie_expired", "malformed_frame", "truncated_frame")
+    for stream in (False, True)
+}
 
 
 def _spec(stream: bool, label: str) -> RequestSpec:
@@ -89,14 +103,21 @@ def test_fallback_on_serves_flash_cleanly(name: str, stream: bool):
     assert r["leaked_slots"] == 0, r
 
 
-@pytest.mark.parametrize("name", list(SITUATIONS))
-@pytest.mark.parametrize("stream", [False, True], ids=["nonstream", "stream"])
+def _off_params():
+    for name in SITUATIONS:
+        for stream in (False, True):
+            if (name, stream) in NOT_APPLICABLE:
+                continue
+            marks = []
+            if (name, stream) in KNOWN_GAPS_FALLBACK_OFF:
+                marks.append(pytest.mark.xfail(strict=True, reason=KNOWN_GAPS_FALLBACK_OFF[(name, stream)]))
+            yield pytest.param(name, stream, id=f"{name}-{'stream' if stream else 'nonstream'}", marks=marks)
+
+
+@pytest.mark.parametrize("name,stream", list(_off_params()))
 def test_fallback_off_never_a_silent_empty_success(name: str, stream: bool):
-    if (name, stream) in NOT_APPLICABLE:
-        pytest.skip("content already streamed")
     r = run(SITUATIONS[name](), stream=stream, fallback=False, label=f"{name}|nofb")
-    clean_empty = r["status"] == 200 and r["error_class"] == "" and not r["content"].strip()
-    assert not clean_empty, r
+    assert not is_silent_empty(r), r
     assert r["other_calls"] == 0, "fallback is off, Flash must not be called"
     assert r["leaked_slots"] == 0, r
 

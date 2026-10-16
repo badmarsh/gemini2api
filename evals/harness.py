@@ -114,6 +114,13 @@ class InProcessSUT:
                 return None
 
             client._send_heartbeat = _noop
+
+            async def _reload_cookies(*a, **k):
+                # the real reload_cookies swaps in a live AsyncSession and talks to Google (RotateCookies etc.);
+                # keep the harness hermetic: report failure and leave the fake session in place
+                return {"success": False, "error": "fake harness: no network"}
+
+            client.reload_cookies = _reload_cookies
             client._ensure_refresh_task = lambda: None
             accounts.append(Account(id=f"acct{i}", psid=f"fake-psid-{i}", psidts="fake", label=f"fake{i}",
                                     client=client))
