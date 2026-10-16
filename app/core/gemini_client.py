@@ -438,7 +438,7 @@ def _scan_complete_wrb_frames(buf: str) -> tuple[list, int]:
             break
         elem_str = buf[start:end + 1]
         try:
-            elem = json.loads(elem_str)
+            elem = json.loads(elem_str, strict=False)
             frames.append(elem)
         except Exception:
             pass
@@ -460,7 +460,7 @@ def _extract_text_from_wrb(elem: list) -> tuple[str | None, str, str]:
         rp = elem[2]
         if not isinstance(rp, str):
             return None, "", ""
-        payload = json.loads(rp)
+        payload = json.loads(rp, strict=False)
         if not isinstance(payload, list) or len(payload) < 5:
             return None, "", ""
         conv = str(payload[1]) if payload[1] else ""
@@ -1082,7 +1082,7 @@ class GeminiWebClient:
             if not line.startswith("[["):
                 continue
             try:
-                outer = json.loads(line)
+                outer = json.loads(line, strict=False)
             except (json.JSONDecodeError, ValueError):
                 continue
             for item in outer:
@@ -1095,7 +1095,7 @@ class GeminiWebClient:
                 if not isinstance(body_str, str):
                     continue
                 try:
-                    return json.loads(body_str)
+                    return json.loads(body_str, strict=False)
                 except (json.JSONDecodeError, ValueError):
                     continue
         return None
@@ -1270,7 +1270,7 @@ class GeminiWebClient:
                 if not line.startswith("[["):
                     continue
                 try:
-                    outer = json.loads(line)
+                    outer = json.loads(line, strict=False)
                 except (json.JSONDecodeError, ValueError):
                     continue
                 for item in outer:
@@ -1280,7 +1280,7 @@ class GeminiWebClient:
                     if not isinstance(body_str, str):
                         continue
                     try:
-                        body = json.loads(body_str)
+                        body = json.loads(body_str, strict=False)
                     except (json.JSONDecodeError, ValueError):
                         continue
                     models_list = body[15] if isinstance(body, list) and len(body) > 15 else None
@@ -1644,7 +1644,7 @@ class GeminiWebClient:
         try:
             if not isinstance(elem, list) or len(elem) < 3 or elem[0] != "wrb.fr":
                 return []
-            payload = json.loads(elem[2]) if isinstance(elem[2], str) else None
+            payload = json.loads(elem[2], strict=False) if isinstance(elem[2], str) else None
             if not isinstance(payload, list) or len(payload) < 5:
                 return []
             cands = payload[4]
@@ -1836,7 +1836,7 @@ class GeminiWebClient:
                 if not line or line.startswith(")]}'"):
                     continue
                 try:
-                    data = json.loads(line)
+                    data = json.loads(line, strict=False)
                 except json.JSONDecodeError:
                     continue
                 if not isinstance(data, list):
@@ -1849,7 +1849,7 @@ class GeminiWebClient:
                     if not isinstance(raw_payload, str):
                         continue
                     try:
-                        payload = json.loads(raw_payload)
+                        payload = json.loads(raw_payload, strict=False)
                     except (json.JSONDecodeError, TypeError):
                         continue
                     if not isinstance(payload, list) or len(payload) < 5:

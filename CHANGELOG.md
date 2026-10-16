@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Fixed
+- **Gemini wire-frame decoders now use `json.loads(..., strict=False)`.** Literal newlines/tabs in a valid upstream string no longer get dropped by the internal frame, model-list and response decoders; this is hardening only and does not repair malformed tool calls.
 - **Tool-loop regenerations share one per-turn budget.** The promise/stall guard and malformed-JSON retry now consume the same single token, so one logical turn cannot stack both expensive Argon regenerations. Complete tool-call argument strings with an unescaped quote are repaired only after a strict JSON parse succeeds; missing closing structure is never synthesized. Parser diagnostics include the decoder reason, response length and truncation suspicion.
 - **Multi-turn context is no longer lost on stored conversations.** The 81-element StreamGenerate payload
   cannot continue a conversation the server already holds (`inner[2]` is the metadata block, spec §4.3), yet
