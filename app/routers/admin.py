@@ -13,8 +13,10 @@ from pydantic import BaseModel
 
 from app.config import APP_VERSION, mask_secret, settings
 from app.core.account_pool import account_pool, AccountStatus
-from app.core import agent_loop, argon_breaker
+from app.core import agent_loop, argon_breaker, regeneration_budget
+from app.core.debug_metrics import metrics as debug_metrics
 from app.core.gemini_client import GeminiWebClient, count_argon_salvaged_results
+from app.utils.tools import is_malformed_tool_result, parse_tool_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -42,6 +44,10 @@ class AddAccountRequest(BaseModel):
     psid: str
     psidts: str = ""
     label: str = ""
+
+
+class ToolJsonTestRequest(BaseModel):
+    text: str
 
 
 @router.post("/reload-cookies")
@@ -106,8 +112,37 @@ async def admin_status():
     status["agent_loop"]["tool_loop_reminder"] = bool(getattr(settings, "tool_loop_reminder", True))
     status["agent_loop"]["stall_guard"] = bool(getattr(settings, "tool_loop_stall_guard", True))
     status["agent_loop"]["salvaged_empty_streams"] = count_argon_salvaged_results()
+    status["regenerations"] = regeneration_budget.stats()
+    status["debug_metrics"] = debug_metrics.summary()
     status["agent_loop"]["fallback_model"] = settings.argon_fallback_model
     return status
+
+
+@router.get("/debug-metrics")
+async def debug_metrics_status():
+    """Return bounded request diagnostics without exposing prompts, cookies or account IDs."""
+    return {
+        "summary": debug_metrics.summary(),
+        "records": debug_metrics.records(limit=200),
+    }
+
+
+@router.post("/debug/tool-json")
+async def validate_tool_json(req: ToolJsonTestRequest):
+    """Exercise the same conservative tool parser used by API responses without regenerating."""
+    diagnostics = {}
+    parsed = parse_tool_response(req.text, diagnostics=diagnostics)
+    calls = parsed.get("tool_calls", []) if isinstance(parsed, dict) else []
+    return {
+        "valid": not is_malformed_tool_result(parsed),
+        "result_type": parsed.get("type") if isinstance(parsed, dict) else None,
+        "tool_call_count": len(calls) if isinstance(calls, list) else 0,
+        "tool_names": [str(c.get("name", ""))[:128] for c in calls if isinstance(c, dict)][:32],
+        "repaired": bool(diagnostics.get("repaired")),
+        "failure_class": diagnostics.get("failure_class", ""),
+        "response_length": diagnostics.get("response_length", len(req.text)),
+        "truncated_suspected": bool(diagnostics.get("truncated_suspected")),
+    }
 
 
 @router.post("/argon/reset")

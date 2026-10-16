@@ -16,6 +16,7 @@ from app.core.fallback import (
     EMPTY_RESPONSE_MESSAGE,
 )
 from app.core import argon_breaker, argon_fallback, agent_loop
+from app.core.regeneration_budget import RegenerationBudget
 from app.core.conversation_store import conversation_store
 from app.core.gemini_client import (
     GEMINI_MODELS, MODEL_ALIASES, _resolve_model, HTTPStatusError, UPSTREAM_ERRORS, classify_error,
@@ -461,6 +462,8 @@ async def chat_completions(req: ChatRequest, request: Request):
         await conversation_store.update(conv)
 
     if has_tools:
+        regeneration_budget = RegenerationBudget()
+
         async def _regenerate_for_tools(nudge: str = "") -> str:
             r = await gemini_client.generate(prompt + nudge, resolved_model, gemini_conv_id, attachments,
                                              gem_id=gem_id, account_id=gem_account_id,
@@ -470,8 +473,9 @@ async def chat_completions(req: ChatRequest, request: Request):
         # Agent-loop guard: a reply that only promises to inspect/edit files ends the harness' turn, so the
         # model is asked once more with the correction appended (app/core/agent_loop.py).
         text, _stall_corrected = await agent_loop.guard_tool_loop(
-            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True))
-        parsed = await parse_tool_response_with_retry(text, _regenerate_for_tools)
+            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True),
+            budget=regeneration_budget)
+        parsed = await parse_tool_response_with_retry(text, _regenerate_for_tools, budget=regeneration_budget)
         if parsed["type"] == "tool_calls":
             tool_calls = []
             for i, tc in enumerate(parsed["tool_calls"]):
@@ -812,6 +816,7 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
         await conversation_store.update(conv)
 
     if has_tools:
+        regeneration_budget = RegenerationBudget()
         # 工具重试沿用「这次到底是谁答的」：已经被 Flash 兜底过的请求不要再去吃一遍 Argon 超时。
         served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
         retry_model = settings.argon_fallback_model if served else model
@@ -825,7 +830,8 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
         # Agent-loop guard: a promise-only reply ("I'll inspect the files...") would end the harness'
         # turn, so it is corrected once before the tool call is parsed.
         guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
-            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True)))
+            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True),
+            budget=regeneration_budget))
         async for ping in _keepalive_task(guard_task):
             yield ping
         text, _stall_corrected = guard_task.result()
@@ -833,7 +839,8 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——这条流早就开了（role 首帧已发），
         # 裸 await 会在这段已开的连接上制造一次远超单个 keepalive 间隔的死寂（issue #10
         # followup F2）。用与上面 gen_task 相同的 task + keepalive 套路续上心跳。
-        parse_task = asyncio.create_task(parse_tool_response_with_retry(text, _regenerate_for_tools))
+        parse_task = asyncio.create_task(parse_tool_response_with_retry(
+            text, _regenerate_for_tools, budget=regeneration_budget))
         async for ping in _keepalive_task(parse_task):
             yield ping
         parsed = parse_task.result()
@@ -915,3 +922,4 @@ async def images_generations(req: ImageGenerationRequest):
         else:
             data.append(ImageData(b64_json=img["b64"]))
     return ImageResponse(data=data)
+

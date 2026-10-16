@@ -70,6 +70,44 @@
     font-size: 0.875rem;
 }
 
+.pg-tool-test-panel {
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg, 10px);
+    background: var(--bg-secondary);
+}
+
+.pg-tool-test-panel .form-hint {
+    display: block;
+    margin: 0.35rem 0 0.55rem;
+}
+
+.pg-tool-json {
+    min-height: 5.5rem !important;
+    margin-top: 0.5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+    font-size: 0.75rem !important;
+    line-height: 1.45 !important;
+    resize: vertical;
+}
+
+.pg-tool-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+    margin-top: 0.6rem;
+}
+
+.pg-tool-result {
+    min-height: 1.25rem;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+.pg-tool-result.is-valid { color: var(--success-color, #16a34a); }
+.pg-tool-result.is-invalid { color: var(--danger-color, #dc2626); }
+
 /* Chat Stream Container */
 .chat-panel {
     overflow: hidden;

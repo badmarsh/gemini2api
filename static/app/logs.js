@@ -225,6 +225,10 @@ function renderTable(records) {
         const latency = (r.latency_ms !== null && r.latency_ms !== undefined)
             ? Math.round(r.latency_ms) + 'ms'
             : '-';
+        const ttft = (r.ttft_ms !== null && r.ttft_ms !== undefined)
+            ? Math.round(r.ttft_ms) + 'ms'
+            : '-';
+        const servedBy = String(r.served_by || '-');
         const selected = r.id === selectedRecordId ? ' selected' : '';
         const fullTime = r.ts || '';
         const fullPath = String(r.path ?? '');
@@ -237,6 +241,8 @@ function renderTable(records) {
             + '<td title="' + escapeHtml(fullPath) + '">' + escapeHtml(truncatePath(r.path)) + '</td>'
             + '<td><span class="status-code ' + statusClass + '">' + escapeHtml(String(r.status ?? '-')) + '</span></td>'
             + '<td>' + escapeHtml(latency) + '</td>'
+            + '<td>' + escapeHtml(ttft) + '</td>'
+            + '<td title="' + escapeHtml(servedBy) + '">' + escapeHtml(servedBy) + '</td>'
             + '<td title="' + escapeHtml(fullModel) + '">' + escapeHtml(fullModel) + '</td>'
             + '</tr>';
     }).join('');

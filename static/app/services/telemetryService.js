@@ -120,6 +120,26 @@ export class TelemetryService {
     }
 
     /**
+     * Get bounded redacted request diagnostics for the dashboard debug panel.
+     */
+    async getDebugMetrics(signal = null) {
+        return await apiCall('GET', APP_CONSTANTS.ROUTES.ADMIN_DEBUG_METRICS, null, {
+            signal,
+            timeout: APP_CONSTANTS.TIMEOUTS.API_DEFAULT
+        });
+    }
+
+    /**
+     * Validate a tool-call fixture using the backend parser without triggering regeneration.
+     */
+    async validateToolJson(text, signal = null) {
+        return await apiCall('POST', APP_CONSTANTS.ROUTES.ADMIN_TOOL_JSON_TEST, { text }, {
+            signal,
+            timeout: APP_CONSTANTS.TIMEOUTS.API_DEFAULT
+        });
+    }
+
+    /**
      * Clear server logs and reset local ring buffer
      */
     async clearLogs(signal = null) {

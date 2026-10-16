@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Fixed
+- **Gemini wire-frame decoders now use `json.loads(..., strict=False)`.** Literal newlines/tabs in a valid upstream string no longer get dropped by the internal frame, model-list and response decoders; this is hardening only and does not repair malformed tool calls.
+- **Tool-loop regenerations share one per-turn budget.** The promise/stall guard and malformed-JSON retry now consume the same single token, so one logical turn cannot stack both expensive Argon regenerations. Complete tool-call argument strings with an unescaped quote are repaired only after a strict JSON parse succeeds; missing closing structure is never synthesized. Parser diagnostics include the decoder reason, response length and truncation suspicion.
 - **Multi-turn context is no longer lost on stored conversations.** The 81-element StreamGenerate payload
   cannot continue a conversation the server already holds (`inner[2]` is the metadata block, spec §4.3), yet
   the router stripped the request down to the newest user message whenever a stored `gemini_conv_id` existed:
@@ -68,6 +70,16 @@ All notable changes to this project will be documented in this file. The format 
   non-streaming responses, a `: gemini2api argon_fallback served_by=...` comment frame in SSE streams (an
   NDJSON line for the native Gemini stream), and `/admin/status` now reports the breaker state, the guard
   counters and the number of empty-but-successful Argon streams.
+- **Bounded redacted request diagnostics**: `/admin/status`, `/admin/debug-metrics`, `/admin/logs` and usage
+  summaries expose TTFT, total latency, inter-chunk gaps, serving model, fallback reason, error class and
+  regeneration count without storing cookies, prompts or account identifiers. Account attribution is a short
+  one-way hash only, and the in-memory event ring is bounded.
+- **Console diagnostics and tool fixture testing**: the dashboard renders the redacted metrics histogram and
+  breakdowns, logs show TTFT/serving model, and the Playground can validate a fixture through the same safe
+  parser without a regeneration or upstream request. All five locale blocks are kept in sync.
+- **Local tuning harness**: `python -m evals.tune` runs deterministic T0, resumable capped T1/T2 HTTP tiers,
+  redaction, one-process locking, reports and an exact-match-only proposal contract for the
+  `gemini-3.8-flash` worker. It never reads runtime `data/`, `.env` or cookie files.
 - `POST /admin/argon/reset` closes the stall breaker by hand instead of waiting out
   `ARGON_STALL_BREAKER_SECONDS`.
 - Panel: new "Argon & agent loop" group (`ARGON_SYSTEM_PROMPT_MODE`, `ARGON_TIMEOUT`, `TOOL_LOOP_REMINDER`,

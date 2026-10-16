@@ -57,6 +57,8 @@ export const APP_CONSTANTS = deepFreeze({
         ADMIN_GEMS: '/admin/gems',
         ADMIN_LOGS: '/admin/logs',
         ADMIN_LOG_RECORD: '/admin/logs',
+        ADMIN_DEBUG_METRICS: '/admin/debug-metrics',
+        ADMIN_TOOL_JSON_TEST: '/admin/debug/tool-json',
         ADMIN_SETTINGS: '/admin/settings',
         ADMIN_USAGE_SUMMARY: '/admin/usage-stats/summary',
         ADMIN_USAGE_HOURLY: '/admin/usage-stats/history',

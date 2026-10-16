@@ -53,3 +53,6 @@ docker-compose.override.yml
 audit_contrast.py
 gemini2api-plugin/
 scratch/
+
+# Local evaluation runs and tuning state
+evals/state.json

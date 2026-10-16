@@ -1,4 +1,4 @@
-<link rel="stylesheet" href="components/section-playground.css?v=8">
+<link rel="stylesheet" href="components/section-playground.css?v=9">
 <!-- Playground Section -->
 <section id="playground" class="section" aria-labelledby="playground-title">
     <div class="playground-header-row">
@@ -25,6 +25,20 @@
                     <span data-i18n="playground.thinking">Thinking / Reasoning</span>
                 </label>
                 <span class="form-hint" data-i18n="playground.thinkingHint">Returns model's inner thoughts & reasoning steps.</span>
+            </div>
+            <div class="form-group pg-tool-test-panel">
+                <label class="pg-thinking-toggle">
+                    <input type="checkbox" id="pg-tool-test">
+                    <span data-i18n="playground.toolTest">Tool JSON test mode</span>
+                </label>
+                <span class="form-hint" data-i18n="playground.toolTestHint">Validate a fixture with the same safe parser; this never regenerates or sends it upstream.</span>
+                <textarea id="pg-tool-json" class="form-control pg-tool-json" data-i18n-placeholder="playground.toolJsonPlaceholder" placeholder="Paste a complete tool-call JSON fixture" rows="4">{"status":"tool_use","tool_calls":[{"name":"weather","arguments":"{\"city\":\"Prague\"}"}]}</textarea>
+                <div class="pg-tool-actions">
+                    <button type="button" class="btn btn-outline btn-sm" id="pg-tool-validate">
+                        <i class="fas fa-check-double"></i> <span data-i18n="playground.validateTool">Validate JSON</span>
+                    </button>
+                    <span id="pg-tool-result" class="pg-tool-result" role="status" aria-live="polite"></span>
+                </div>
             </div>
             <div class="form-group">
                 <label class="form-label" for="pg-message" data-i18n="playground.message">Prompt / Instructions</label>

@@ -1,11 +1,138 @@
 import json
 import re
 import logging
+from typing import MutableMapping
 
 logger = logging.getLogger(__name__)
 
 # Notice for malformed tool call JSON sent to clients and used by is_malformed_tool_result.
 MALFORMED_TOOL_NOTICE = "(The tool call format returned by the model was invalid and has been ignored. Please retry or switch to gemini-flash.)"
+
+
+def _set_parse_diagnostic(diagnostics: MutableMapping | None, **values) -> None:
+    """Update optional parser diagnostics without changing the public parsed shape."""
+    if diagnostics is not None:
+        diagnostics.update(values)
+
+
+def _json_error_details(exc: json.JSONDecodeError, text: str) -> dict:
+    message = exc.msg or "JSON decode error"
+    lowered = message.lower()
+    if "unterminated string" in lowered:
+        failure_class = "unterminated_string"
+    elif "delimiter" in lowered or "property name" in lowered:
+        failure_class = "delimiter"
+    else:
+        failure_class = "json_syntax"
+    return {
+        "error": message,
+        "position": exc.pos,
+        "failure_class": failure_class,
+        "response_length": len(text),
+    }
+
+
+def _looks_truncated_json(text: str) -> bool:
+    """Conservative diagnostic only; this function never repairs or accepts JSON."""
+    if not text:
+        return False
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+            if depth < 0:
+                return False
+    return in_string or depth > 0
+
+
+def _repair_complete_unescaped_quotes(candidate: str) -> str | None:
+    """Repair only unescaped quotes inside a complete JSON object string.
+
+    The repair is deliberately a bounded JSON-string state-machine, not a regex rescue parser. A quote is
+    escaped only when doing so leads to a complete object accepted by ``json.loads(strict=False)``. The
+    candidate must already have an outer closing brace; a missing brace/quote (the truncation case) is never
+    synthesized. Existing valid JSON is returned untouched by the caller before this function is reached.
+    """
+    if not isinstance(candidate, str) or not candidate.startswith("{") or not candidate.rstrip().endswith("}"):
+        return None
+    if len(candidate) > 128 * 1024:
+        return None
+
+    # Stack-based DFS avoids Python recursion limits for large tool arguments. Only ambiguous quotes after a
+    # forced inner quote create a second state; ordinary valid JSON is traversed once.
+    stack = [(0, False, False, False, [])]
+    branches = 0
+    while stack and branches <= 256:
+        pos, in_string, suspicious, changed, out = stack.pop()
+        while pos < len(candidate):
+            char = candidate[pos]
+            if not in_string:
+                if char == '"':
+                    out.append(char)
+                    pos += 1
+                    in_string = True
+                    suspicious = False
+                    continue
+                out.append(char)
+                pos += 1
+                continue
+
+            if char == "\\":
+                # Preserve valid escape pairs. Invalid escapes are outside this narrow repair's scope.
+                if pos + 1 >= len(candidate):
+                    break
+                out.extend((char, candidate[pos + 1]))
+                pos += 2
+                continue
+            if char != '"':
+                out.append(char)
+                pos += 1
+                continue
+
+            next_pos = pos + 1
+            while next_pos < len(candidate) and candidate[next_pos].isspace():
+                next_pos += 1
+            can_close = next_pos < len(candidate) and candidate[next_pos] in ",}]:"
+            if not can_close:
+                # A quote followed by ordinary text cannot close a JSON string.
+                out.extend(("\\", '"'))
+                changed = True
+                suspicious = True
+                pos += 1
+                continue
+
+            # Try the grammar-preserving close first. If an earlier JS quote looked like a close, the escape
+            # branch is considered as a second interpretation and must still pass json.loads below.
+            if suspicious:
+                branches += 1
+                stack.append((pos + 1, True, True, True, out + ["\\", '"']))
+            out.append('"')
+            pos += 1
+            in_string = False
+            suspicious = False
+
+        if pos >= len(candidate) and not in_string and changed:
+            repaired = "".join(out)
+            try:
+                json.loads(repaired, strict=False)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            return repaired
+    return None
 
 
 # 明确的图像生成意图关键词。收窄到「确实在要图」的表达，避免误判
@@ -332,11 +459,15 @@ def _unwrap_text_status_envelope(text: str) -> dict | None:
     return None
 
 
-def _try_parse(text: str) -> dict | None:
-    """尝试把一段文本解析成工具/文本结构，失败返回 None。"""
+def _try_parse(text: str, diagnostics: MutableMapping | None = None) -> dict | None:
+    """Try to parse a tool/text envelope and retain the JSON error for diagnostics."""
     try:
         parsed = json.loads(text, strict=False)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError as exc:
+        _set_parse_diagnostic(diagnostics, **_json_error_details(exc, text))
+        parsed = None
+    except TypeError as exc:
+        _set_parse_diagnostic(diagnostics, error=str(exc), failure_class="json_type", response_length=len(text))
         parsed = None
 
     if isinstance(parsed, dict):
@@ -358,48 +489,97 @@ def _try_parse(text: str) -> dict | None:
     return _unwrap_text_status_envelope(text)
 
 
-def parse_tool_response(text: str) -> dict:
-    """解析模型返回的（提示词模拟的）工具调用文本，多层容错。
-    Gemini Web 非原生工具模型，常输出被 markdown 包裹/夹带文字/轻微畸形的 JSON，
-    逐层尝试挽救；都失败时不把畸形 JSON 当正常文本透传。"""
+def parse_tool_response(text: str, *, diagnostics: MutableMapping | None = None) -> dict:
+    """Parse the model's prompt-simulated tool-call response.
+
+    The return shape remains backwards-compatible. When ``diagnostics`` is supplied it receives the response
+    length, the last JSON decoder reason and whether the narrow complete-string quote repair was used.
+    Truncated JSON is never completed.
+    """
+    if diagnostics is not None:
+        diagnostics.clear()
+        diagnostics.update({
+            "response_length": len(text) if isinstance(text, str) else 0,
+            "repaired": False,
+            "truncated_suspected": False,
+        })
     if not isinstance(text, str) or not text.strip():
         return {"type": "text", "content": text or ""}
 
     # 1. 直接解析
-    r = _try_parse(text)
+    r = _try_parse(text, diagnostics)
     if r:
         return r
     # 2. 剥离 markdown 代码块后解析
     stripped = _strip_code_fence(text)
     if stripped != text:
-        r = _try_parse(stripped)
+        r = _try_parse(stripped, diagnostics)
         if r:
             return r
     # 3. 从文本中提取第一个完整 JSON 对象后解析
     candidate = _extract_json_object(stripped)
     if candidate:
-        r = _try_parse(candidate)
+        r = _try_parse(candidate, diagnostics)
         if r:
             return r
 
     # 3b. 尝试最外层大括号提取（防内层嵌套引号破坏深度扫描）
     start_brace = stripped.find("{")
     end_brace = stripped.rfind("}")
+    outer_candidate = None
     if start_brace != -1 and end_brace > start_brace:
         outer_candidate = stripped[start_brace:end_brace + 1]
         if outer_candidate != candidate:
-            r = _try_parse(outer_candidate)
+            r = _try_parse(outer_candidate, diagnostics)
             if r:
                 return r
 
-    # 4. 都失败：判断是否是「残缺/畸形的工具调用 JSON」——若是，不把垃圾透传给客户端
+    # 4. A complete object with an otherwise valid structure may contain an unescaped quote in an argument
+    # string. Try only the bounded state-machine repair; it cannot invent a closing brace or string quote.
     looks_like_tool = ('"tool_use"' in text or '"tool_calls"' in text
                        or ('"name"' in text and '"arguments"' in text))
     if looks_like_tool:
-        logger.warning(f"工具调用 JSON 解析失败，畸形片段不透传: {text[:120]!r}")
+        repair_candidates = []
+        for value in (outer_candidate, stripped):
+            if value and value not in repair_candidates:
+                repair_candidates.append(value)
+        for value in repair_candidates:
+            repaired = _repair_complete_unescaped_quotes(value)
+            if repaired is None:
+                continue
+            repaired_result = _try_parse(repaired, diagnostics)
+            if repaired_result:
+                _set_parse_diagnostic(
+                    diagnostics,
+                    repaired=True,
+                    failure_class="unescaped_quote_repaired",
+                    response_length=len(text),
+                    truncated_suspected=False,
+                )
+                logger.warning(
+                    "Tool-call JSON contained an unescaped quote; repaired a complete argument string "
+                    "(response_length=%d)", len(text)
+                )
+                return repaired_result
+
+        truncated_suspected = _looks_truncated_json(text)
+        _set_parse_diagnostic(
+            diagnostics,
+            response_length=len(text),
+            truncated_suspected=truncated_suspected,
+            failure_class=("truncated_json" if truncated_suspected else diagnostics.get("failure_class", "json_syntax")
+                           if diagnostics is not None else "json_syntax"),
+        )
+        reason = diagnostics.get("error", "unknown JSON error") if diagnostics is not None else "unknown JSON error"
+        failure_class = diagnostics.get("failure_class", "json_syntax") if diagnostics is not None else "json_syntax"
+        logger.warning(
+            "Tool-call JSON parse failed (%s; %s; response_length=%d; truncated_suspected=%s); "
+            "malformed fragment will not be forwarded: %r",
+            failure_class, reason, len(text), truncated_suspected, text[:120],
+        )
         return {"type": "text", "content": MALFORMED_TOOL_NOTICE}
 
-    # 5. 尝试提取 text 包装器内容，防止 {"status": "text", "content": ...} 裸泄露给客户端
+    # 5. Try to unwrap a text envelope so raw JSON does not leak to clients.
     envelope = _unwrap_text_status_envelope(text)
     if envelope:
         return envelope
@@ -417,35 +597,54 @@ def is_malformed_tool_result(parsed) -> bool:
     )
 
 
-async def parse_tool_response_with_retry(text: str, regenerate) -> dict:
-    """解析工具调用文本；判定为畸形时用 ``regenerate()`` 重新取一次文本，再解析一次。
+def _publish_parse_diagnostics(diagnostics: MutableMapping) -> None:
+    try:
+        from app.core.request_context import set_field
+        set_field("parse_diagnostic", dict(diagnostics))
+    except Exception:
+        pass
 
-    **明确不做「截断 JSON 自动修补」**：补全一个被截断的工具调用，等于拿猜出来的参数
-    去执行工具（issue #10 里那条被截断的片段就是个超长 alpha 表达式），风险远大于收益。
-    宁可这一轮失败让客户端重试，也绝不猜。
 
-    约束：
-    - **最多重试一次**，不递归；首次即合法时一次都不重试（不平白加倍延迟）。
-    - ``regenerate()`` 抛异常 / 返回空 / 二次仍畸形 → 一律返回**首次**结果。
-      重试绝不能把一次"降级成功"变成 500。
+async def parse_tool_response_with_retry(text: str, regenerate, *, budget=None,
+                                         diagnostics: MutableMapping | None = None) -> dict:
+    """Parse a tool response and, if necessary, regenerate at most once.
+
+    ``budget`` is shared with ``agent_loop.guard_tool_loop`` by every router. A missing budget keeps the
+    standalone helper's historical one-retry behaviour for callers that use it directly.
     """
-    parsed = parse_tool_response(text)
+    local_diagnostics = diagnostics if diagnostics is not None else {}
+    parsed = parse_tool_response(text, diagnostics=local_diagnostics)
     if regenerate is None or not is_malformed_tool_result(parsed):
+        _publish_parse_diagnostics(local_diagnostics)
         return parsed
 
-    logger.warning("工具调用 JSON 畸形，重新生成一次（仅一次，不修补截断 JSON）")
+    if budget is None:
+        from app.core.regeneration_budget import RegenerationBudget
+        budget = RegenerationBudget()
+    if not budget.try_consume("parse_retry"):
+        logger.warning("Tool-call retry skipped: the per-turn regeneration budget is exhausted")
+        _publish_parse_diagnostics(local_diagnostics)
+        return parsed
+
+    logger.warning("Tool-call JSON is malformed; regenerating once (no truncated-JSON repair)")
     try:
         retry_text = await regenerate()
     except Exception as e:
-        logger.warning(f"工具调用重试失败，沿用首次降级结果: {e}")
+        logger.warning(f"Tool-call retry failed; keeping the first degraded result: {type(e).__name__}")
+        _publish_parse_diagnostics(local_diagnostics)
         return parsed
 
     if not isinstance(retry_text, str) or not retry_text.strip():
+        _publish_parse_diagnostics(local_diagnostics)
         return parsed
 
-    retried = parse_tool_response(retry_text)
+    retried_diagnostics = {}
+    retried = parse_tool_response(retry_text, diagnostics=retried_diagnostics)
+    if diagnostics is not None:
+        diagnostics["retry"] = retried_diagnostics
+    _publish_parse_diagnostics(retried_diagnostics if not is_malformed_tool_result(retried) else (diagnostics or retried_diagnostics))
     if is_malformed_tool_result(retried):
-        logger.warning("工具调用重试后仍畸形，不再重试")
+        logger.warning("Tool-call retry is still malformed; no further retry")
         return parsed
     return retried
 

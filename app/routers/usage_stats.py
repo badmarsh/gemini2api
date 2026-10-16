@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, Request, Query, HTTPException
 
+from app.core.debug_metrics import metrics as debug_metrics
+
 router = APIRouter(prefix="/admin/usage-stats", tags=["usage-stats"])
 
 # 用量统计关闭/尚未初始化时的空摘要（与 UsageStatsStore.get_summary 的零值形状一致），
@@ -20,8 +22,11 @@ async def get_summary(request: Request):
     # store 在 lifespan 中始终实例化；这里仍做防御性 getattr，避免任何未初始化场景 500。
     store = getattr(request.app.state, "usage_stats_store", None)
     if store is None:
-        return dict(_EMPTY_SUMMARY)
-    return store.get_summary()
+        summary = dict(_EMPTY_SUMMARY)
+    else:
+        summary = store.get_summary()
+    summary["debug_metrics"] = debug_metrics.summary()
+    return summary
 
 
 @router.get("/history")
