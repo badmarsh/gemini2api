@@ -1,0 +1,3075 @@
+diff --git a/.env.example b/.env.example
+index 0a9b108..feee76f 100644
+--- a/.env.example
++++ b/.env.example
+@@ -64,9 +64,31 @@ ARGON_FAILOVER_ON_STALL=false
+ # After an Argon stall, serve Argon requests from Flash for this many seconds (0 = disabled), so every
+ # following request does not wait out the same 240-360 s timeout. Needs ARGON_FALLBACK_TO_FLASH=true.
+ ARGON_STALL_BREAKER_SECONDS=180
+-# Optional system prompt prepended to Argon requests that carry no system message of their own
+-# (new conversations only). Empty = disabled.
++# Optional system prompt injected into Argon requests (new conversations only). Empty = disabled.
++# Coding harnesses (Codex, Cline, OpenCode) always send their own developer prompt, so with the legacy rule
++# ("only when the caller sent nothing") these rules were never applied to them at all.
+ ARGON_SYSTEM_PROMPT=
++# How ARGON_SYSTEM_PROMPT combines with a system/developer message the caller already sent:
++#   merge          = prepend the Argon rules in front of the caller's prompt (default, recommended)
++#   only_when_none = legacy behaviour: skip the Argon rules when the caller sent one (do not use with Codex)
++#   replace        = use the Argon rules instead of the caller's prompt
++ARGON_SYSTEM_PROMPT_MODE=merge
++
++# Agent-loop guard for coding harnesses (inert when a request declares no tools):
++#   TOOL_LOOP_REMINDER    - append "[MANDATORY] act with a tool now, no promises" to the end of the prompt
++#   TOOL_LOOP_STALL_GUARD - if the model still replies with a promise instead of a tool_call, ask once more
++#                           with the correction appended (a promise ends the harness' turn: it goes idle)
++TOOL_LOOP_REMINDER=true
++TOOL_LOOP_STALL_GUARD=true
++# Argon request timeout (seconds). Argon's test-time compute regularly needs 30-75s before the first token.
++# Raise it for very long agent turns; the stall breaker below is what keeps a hung request from repeating.
++ARGON_TIMEOUT=360
++# Does Google continue a conversation the proxy already holds? The 81-element StreamGenerate payload has
++# no slot for a conversation id (inner[2] is the metadata block), so it is ignored upstream. With the
++# default false the proxy sends the client's FULL history on every request (correct output, more tokens);
++# set true only after re-verifying the protocol, otherwise the prompt is stripped to the last user
++# message while the model receives no context at all.
++SERVER_SIDE_CONTINUATION=false
+ 
+ # Note: Settings modified via the web dashboard are persisted in data/settings-overrides.json
+ # and replayed on startup with higher priority than this file or environment variables.
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 98d3091..42b1768 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,30 @@ All notable changes to this project will be documented in this file. The format
+ 
+ ## [Unreleased]
+ 
++### Fixed
++- **Multi-turn context is no longer lost on stored conversations.** The 81-element StreamGenerate payload
++  cannot continue a conversation the server already holds (`inner[2]` is the metadata block, spec §4.3), yet
++  the router stripped the request down to the newest user message whenever a stored `gemini_conv_id` existed:
++  the client's `conversation_id` was "accepted" and the model answered without any history. The full history
++  is now sent by default; `SERVER_SIDE_CONTINUATION=true` restores last-message-only once the protocol can
++  really carry the id again. The dropped id is reported once in the log (never printed).
++- **Companion UUID pairing restored.** `_encode_payload_thinking` mints the per-request UUID that the payload
++  carries at `inner[59]`; the `x-goog-ext-525005358-jspb` header must echo that same UUID. The Argon rewrite
++  discarded the returned value and minted a second, unrelated UUID for the header (upstream paired them).
++  Both call sites use the encoder's UUID again, with a regression test per call site.
++- Order of operations for `ARGON_SYSTEM_PROMPT` / tool-loop work: see the entries below (merge mode,
++  `TOOL_LOOP_REMINDER`, stall guard, single Argon->Flash implementation, visible substitutions).
++- `.env` robustness on Windows: a UTF-8 BOM at the start of the file (added by Notepad or PowerShell 5.1) no longer breaks the first key, and unknown keys (for example those used by the refresher, which shares the file) no longer crash startup. Startup logs one warning listing the unknown key names (never values) so typos are still noticed.
++- The Gemini-to-third-party fallback toggle (`PATCH /admin/api-keys/fallback`) is now persisted in `data/settings-overrides.json`, like the settings panel fields. Under Docker Compose `env_file` the real environment variable beat the container-local `.env`, so the toggle silently reverted after a restart. The write is all-or-nothing: if any layer fails, memory and files are restored.
++- Text encoding is now explicit everywhere (`utf-8-sig` when reading hand-edited files, `utf-8` when writing), so the app no longer depends on the Windows locale code page. Persistence is hardened against bad files: conversation history is written atomically and loaded file by file, and a corrupt `accounts.json` is moved to `accounts.json.corrupt-<YYYYmmdd-HHMMSS>` before the pool starts empty instead of being silently overwritten.
++- Usage statistics snapshots kept failing on Windows because `Path.rename` raises `FileExistsError` when the target exists; they now use `replace`, so persistence works there.
++- An auto-generated API key is now persisted when `.env` has no exact `API_KEY=` line (for example only `ADMIN_API_KEY=`, an `export` prefix, or an empty value). The file is parsed line by line and "saved" is only logged after the write succeeded.
++- `POST /admin/restart` flushes the log store before signalling and now answers `501` on Windows, where `os.kill(SIGTERM)` is a hard `TerminateProcess` (no graceful shutdown and nothing starts the service again). The web console's Restart button now passes the required `?confirm=true`; before, it always got `400` and silently did nothing.
++- `.env` rewrites (settings panel, fallback toggle, generated API key) are atomic: a temp file next to `.env` is swapped in with `os.replace`, so a crash can no longer leave a truncated file. A read-only `.env` still fails up front with a permission error, the file mode is kept, and a bind-mounted `.env` that cannot be renamed over falls back to a direct write. A newly created `.env` is now private (0600). The parent directory is fsynced after the swap on POSIX (best effort).
++- The web console's Restart button no longer claims "Restarting service..." when the request failed: it shows the real error and does not start the reload/health polling. `GET /admin/system-info` reports `restart_supported`, and the button is hidden where restart is unsupported (Windows).
++
++---
++
+ ### Security
+ - `/docs`, `/redoc` and `/openapi.json` are now disabled by default (404). FastAPI serves them without checking the API key, and they listed every route including the admin API. Set `DOCS_ENABLED=true` to bring them back; they stay unauthenticated, so use it for local development only.
+ - The uvicorn access log no longer prints `?token=` values or `sk-...` keys from the request path; a logging filter scrubs them before the line is formatted.
+@@ -19,22 +43,31 @@ All notable changes to this project will be documented in this file. The format
+ - `/v1/messages` and the native Gemini endpoints now also fall back from Argon to Flash (same rules as the OpenAI endpoints, before any content was streamed).
+ - An Argon timeout with the Flash fallback on now goes straight to Flash instead of retrying the other Argon account (which doubled the wait to ~2x360 s). `ARGON_FAILOVER_ON_STALL=true` restores the old behaviour.
+ - Stall circuit breaker: after an Argon stall, Argon requests are served by Flash for `ARGON_STALL_BREAKER_SECONDS` (default 180) instead of each waiting out the full timeout again. Set it to `0` to disable. Has no effect when `ARGON_FALLBACK_TO_FLASH` is off.
+-
+-### Added
++- `ARGON_SYSTEM_PROMPT` now **merges** in front of the caller's own system/developer prompt by default.
++  Codex, Cline and OpenCode always send theirs, and the old "only when the caller sent nothing" rule silently
++  disabled the Argon rules for exactly those clients (`ARGON_SYSTEM_PROMPT_MODE=only_when_none` restores it).
++- One implementation of the Argon -> Flash rules (`app/core/argon_fallback.py`) replaces the four divergent
++  copies in `openai.py`, `claude.py`, `gemini.py` and `responses.py`; a failed fallback re-raises the original
++  error instead of returning an empty 200 completion.
++- First-chunk wait for Argon streams is 150 s (nothing can be emitted before it); the 240 s silence window
++  **after** content started is deliberately unchanged (rt=c: a shorter window truncates replies).
++- `ARGON_TIMEOUT` makes the Argon request timeout configurable (0 = built-in default).
++
++### Added
++- **Agent-loop guard for coding harnesses** (`app/core/agent_loop.py`): an end-of-prompt
++  `TOOL_LOOP_REMINDER` ("emit the tool_call now, never a promise") plus detection of a conversational stall
++  and exactly one corrective retry (`TOOL_LOOP_STALL_GUARD`). A promise-only reply is what ends a harness'
++  turn and leaves the agent idle after 1-2 tool calls; the retry keeps the first reply when it fails.
++- **Visible Argon -> Flash substitutions**: `X-Gemini2API-Argon-Served-By` / `-Fallback-Reason` headers on
++  non-streaming responses, a `: gemini2api argon_fallback served_by=...` comment frame in SSE streams (an
++  NDJSON line for the native Gemini stream), and `/admin/status` now reports the breaker state, the guard
++  counters and the number of empty-but-successful Argon streams.
++- `POST /admin/argon/reset` closes the stall breaker by hand instead of waiting out
++  `ARGON_STALL_BREAKER_SECONDS`.
++- Panel: new "Argon & agent loop" group (`ARGON_SYSTEM_PROMPT_MODE`, `ARGON_TIMEOUT`, `TOOL_LOOP_REMINDER`,
++  `TOOL_LOOP_STALL_GUARD`) with labels and hints in all five languages.
+ - Dashboard v2: the dashboard now loads `/admin/status` and `/admin/system-info` in parallel (`Promise.allSettled`). If only one of them fails, the other card group still renders and a small notice with a Retry button appears for the failed part; the full-section error screen is kept for the case where both fail. The dashboard also refreshes itself every 30 seconds, but only while it is the active section and the browser tab is visible (a background refresh never replaces the page with an error screen and skips the static QR cards). New i18n keys `dashboard.error.status`, `dashboard.error.system`, `dashboard.retry` in all five languages.
+ 
+-### Fixed
+-- `.env` robustness on Windows: a UTF-8 BOM at the start of the file (added by Notepad or PowerShell 5.1) no longer breaks the first key, and unknown keys (for example those used by the refresher, which shares the file) no longer crash startup. Startup logs one warning listing the unknown key names (never values) so typos are still noticed.
+-- The Gemini-to-third-party fallback toggle (`PATCH /admin/api-keys/fallback`) is now persisted in `data/settings-overrides.json`, like the settings panel fields. Under Docker Compose `env_file` the real environment variable beat the container-local `.env`, so the toggle silently reverted after a restart. The write is all-or-nothing: if any layer fails, memory and files are restored.
+-- Text encoding is now explicit everywhere (`utf-8-sig` when reading hand-edited files, `utf-8` when writing), so the app no longer depends on the Windows locale code page. Persistence is hardened against bad files: conversation history is written atomically and loaded file by file, and a corrupt `accounts.json` is moved to `accounts.json.corrupt-<YYYYmmdd-HHMMSS>` before the pool starts empty instead of being silently overwritten.
+-- Usage statistics snapshots kept failing on Windows because `Path.rename` raises `FileExistsError` when the target exists; they now use `replace`, so persistence works there.
+-- An auto-generated API key is now persisted when `.env` has no exact `API_KEY=` line (for example only `ADMIN_API_KEY=`, an `export` prefix, or an empty value). The file is parsed line by line and "saved" is only logged after the write succeeded.
+-- `POST /admin/restart` flushes the log store before signalling and now answers `501` on Windows, where `os.kill(SIGTERM)` is a hard `TerminateProcess` (no graceful shutdown and nothing starts the service again). The web console's Restart button now passes the required `?confirm=true`; before, it always got `400` and silently did nothing.
+-- `.env` rewrites (settings panel, fallback toggle, generated API key) are atomic: a temp file next to `.env` is swapped in with `os.replace`, so a crash can no longer leave a truncated file. A read-only `.env` still fails up front with a permission error, the file mode is kept, and a bind-mounted `.env` that cannot be renamed over falls back to a direct write. A newly created `.env` is now private (0600). The parent directory is fsynced after the swap on POSIX (best effort).
+-- The web console's Restart button no longer claims "Restarting service..." when the request failed: it shows the real error and does not start the reload/health polling. `GET /admin/system-info` reports `restart_supported`, and the button is hidden where restart is unsupported (Windows).
+-
+----
+-
+ ## [1.7.1] - 2026-10-14 (badmarsh/gemini2api v1.7.1)
+ 
+ > Security patch for the static-extension authentication bypass, failover and stream reliability fixes, and secret-handling and console hardening.
+diff --git a/app/config.py b/app/config.py
+index bf66059..a9e38ba 100644
+--- a/app/config.py
++++ b/app/config.py
+@@ -114,9 +114,31 @@ class Settings(BaseSettings):
+     # After an Argon stall (timeout), serve Argon requests from the Flash fallback for this many seconds instead
+     # of letting each one wait out the same timeout. 0 disables. Only active when argon_fallback_to_flash=true.
+     argon_stall_breaker_seconds: int = 180
++    # Argon request timeout in seconds (0 = keep the built-in default). Argon's test-time compute
++    # regularly needs 30-75s before the first token; lower it for snappier failures, raise it for very
++    # long agent turns. A stuck request is handled by the stall breaker above, not by a shorter timeout.
++    argon_timeout: int = 360
++    # Does the StreamGenerate payload continue a conversation the server already holds? It does NOT:
++    # the 81-element thinking payload has no slot for it (inner[2] is the metadata block, spec §4.3), so
++    # a stored conversation_id is ignored upstream. The routers therefore send the CLIENT's full history
++    # instead of just the last user message. Set true only after re-verifying the protocol (an ignored
++    # conversation_id plus a stripped prompt means the model answers without any context).
++    server_side_continuation: bool = False
+     # Optional system prompt prepended to every Argon request (before any user/tool content).
+     # Set via ARGON_SYSTEM_PROMPT env var. Empty string = disabled. Supports multiline via \n escapes.
+     argon_system_prompt: str = ""
++    # How ARGON_SYSTEM_PROMPT combines with a system/developer message the caller already sent:
++    #   "merge"          - prepend it in front of the caller's own system message (default);
++    #   "only_when_none" - the old behaviour: skip it entirely when the caller sent one. Coding harnesses
++    #                      (Codex, Cline, OpenCode) always send their own developer prompt, so this silently
++    #                      disabled the Argon rules in exactly the setup they were written for;
++    #   "replace"        - drop the caller's system message and use ARGON_SYSTEM_PROMPT instead.
++    argon_system_prompt_mode: str = "merge"
++    # Agent loop guard (coding harnesses): append a hard "act with a tool now, no promises" reminder to the
++    # end of every tool-mode prompt, and detect a conversational stall (a reply that only promises future
++    # work) and correct it once. Both are inert when the request declares no tools.
++    tool_loop_reminder: bool = True
++    tool_loop_stall_guard: bool = True
+ 
+     @field_validator("gemini_psid")
+     @classmethod
+diff --git a/app/core/agent_loop.py b/app/core/agent_loop.py
+new file mode 100644
+index 0000000..bb94481
+--- /dev/null
++++ b/app/core/agent_loop.py
+@@ -0,0 +1,138 @@
++"""Agent-loop guard: stops a coding agent from falling asleep mid-task.
++
++Gemini Web is trained as a chat assistant. Inside a tool loop (Codex, Cline, OpenCode, OpenHands...) that
++shows up as the "conversational promise" stall: the model answers ``I'll inspect the files now and let you
++know`` instead of emitting a tool_call. The harness only sees text, concludes the assistant is done and goes
++idle -- the user has to nudge it by hand, every single round.
++
++Two defences, both inert when the request declares no tools:
++
++1. ``build_tool_prompt`` appends the reminder to the *end* of the flattened prompt (a prefix-only
++   instruction is what the model forgets first in long turns). See ``app/utils/tools.py``.
++2. ``guard_tool_loop`` catches the residual stall -- a reply that parses as plain text yet reads as a
++   promise of future work -- and asks the model once more with the corrective nudge appended. One retry,
++   never a loop; the first reply is kept if the retry does not produce a tool_call either.
++
++The guard is deliberately conservative: it never fires on a reply that contains a code fence, on a reply
++that already parses as a tool call, or on text longer than ``_MAX_PROMISE_CHARS`` (long answers are work
++product, not promises). Every correction is logged and counted so ``/admin/status`` can show how often the
++loop needed rescuing.
++"""
++from __future__ import annotations
++
++import logging
++import re
++import threading
++
++logger = logging.getLogger(__name__)
++
++# Phrases that mean "I am about to do it" rather than "I did it". Multi-language because the end user here
++# talks to the model in Slovak/English and the model mirrors the conversation language.
++_PROMISE_PATTERNS = (
++    # English
++    r"\bi(?:'ll| will) (?:now |immediately |first )?(?:inspect|look|check|read|start|begin|proceed|review|analyse|analyze|implement|create|build|update|write|run|continue|handle)",
++    r"\bi(?:'m| am) (?:now )?(?:going to|about to|starting to)",
++    r"\blet me (?:start|begin|first|now|check|look|inspect|read|walk)",
++    r"\bworking on (?:it|this|that) now",
++    r"\bi(?:'m| am) working on\b",
++    r"\b(?:will|i(?:'ll| will)) (?:report|let you know|keep you posted|update you)\b",
++    r"\b(?:starting|beginning) (?:the )?(?:implementation|work|task|process)\b",
++    r"\bnext steps? (?:are|will be|:)\b",
++    r"\bgive me a (?:moment|minute|second)\b",
++    r"\bstanding by\b",
++    # Slovak / Czech (the model mirrors the language of the conversation)
++    r"\bpracujem na (?:tom|ňom|tomto)\b",
++    r"\bidem (?:na to|sa do toho|to spraviť|to urobiť|pokračovať)\b",
++    r"\bzačínam\b|\bzacnem\b|\bzačnem\b|\bspustil som realizáciu\b|\bspustam realizaciu\b",
++    r"\bdám (?:ti|vám) vedieť\b|\bdam (?:ti|vam) vediet\b",
++    r"\bbudem (?:ťa|vás|ta|vas) informovať\b|\bbudem informovat\b",
++    r"\bpripravujem\b|\bchystám sa\b|\bchystam sa\b",
++    r"\bpokračujem\b|\bpokracujem\b",
++)
++
++_PROMISE_RE = re.compile("|".join(_PROMISE_PATTERNS), re.IGNORECASE)
++# A long reply is work product (an answer, a plan, code), not a stall. Only short promise-shaped replies
++# are worth one corrective round trip.
++_MAX_PROMISE_CHARS = 1200
++
++NUDGE = (
++    "\n\n[MANDATORY CORRECTION] Your previous message did not contain a tool_call — it only described what "
++    "you were about to do. There is no background worker and no progress to report: only a tool_call does "
++    "the work. Do NOT restate intent, do NOT announce a plan, do NOT promise to report back. Emit the "
++    "tool_call now, in this message, as the single JSON object defined above."
++)
++
++_lock = threading.Lock()
++_stalls_seen = 0        # promise-shaped replies detected
++_stalls_corrected = 0   # of those, how many the retry turned into a tool_call
++
++
++def stats() -> dict:
++    with _lock:
++        return {"detected": _stalls_seen, "corrected": _stalls_corrected}
++
++
++def reset_stats() -> None:
++    global _stalls_seen, _stalls_corrected
++    with _lock:
++        _stalls_seen = 0
++        _stalls_corrected = 0
++
++
++def looks_like_stall(text: str) -> bool:
++    """True when the reply reads as a promise of future work, i.e. an agent-loop stall.
++
++    Conservative by construction: code fences, a tool-call payload, long answers and plain questions are
++    all ignored (a request for clarification is a legitimate turn end).
++    """
++    if not isinstance(text, str):
++        return False
++    stripped = text.strip()
++    if not stripped or len(stripped) > _MAX_PROMISE_CHARS:
++        return False
++    if "```" in stripped:
++        return False
++    if '"tool_calls"' in stripped or '"tool_use"' in stripped:
++        return False
++    return bool(_PROMISE_RE.search(stripped))
++
++
++async def guard_tool_loop(text: str, regenerate, *, enabled: bool = True) -> tuple[str, bool]:
++    """Return ``(text, corrected)``, asking the model once more when it stalled on a promise.
++
++    ``regenerate(nudge)`` must re-run the upstream call with ``nudge`` appended to the prompt. Any failure
++    (exception, empty reply, still no tool call) keeps the original text: this guard may never turn a
++    graceful answer into an error. Disabled, or nothing to correct → the input is returned untouched.
++    """
++    global _stalls_seen, _stalls_corrected
++    if not enabled or regenerate is None or not looks_like_stall(text):
++        return text, False
++
++    with _lock:
++        _stalls_seen += 1
++    logger.warning(f"Agent-loop stall detected (a promise, no tool_call): {text.strip()[:120]!r} "
++                   f"— regenerating once with the tool-loop correction")
++
++    try:
++        retry_text = await regenerate(NUDGE)
++    except Exception as e:  # noqa: BLE001 - the guard must never break the reply path
++        logger.warning(f"Tool-loop correction failed, keeping the first reply: {type(e).__name__}: {e}")
++        return text, False
++
++    if not isinstance(retry_text, str) or not retry_text.strip():
++        return text, False
++    if not _has_tool_payload(retry_text):
++        logger.warning("Tool-loop correction did not produce a tool_call either; keeping the first reply")
++        return text, False
++
++    with _lock:
++        _stalls_corrected += 1
++    logger.info("Tool-loop correction produced a tool_call; using it")
++    return retry_text, True
++
++
++def _has_tool_payload(text: str) -> bool:
++    """Cheap structural check that the corrected reply carries a tool call (parsing happens later)."""
++    stripped = text.strip()
++    return ('"tool_calls"' in stripped or '"tool_use"' in stripped
++            or ('"name"' in stripped and '"arguments"' in stripped))
+diff --git a/app/core/argon_breaker.py b/app/core/argon_breaker.py
+index adaf2f6..5b96dc6 100644
+--- a/app/core/argon_breaker.py
++++ b/app/core/argon_breaker.py
+@@ -1,21 +1,33 @@
+-"""Short-lived circuit breaker for Argon stalls.
++"""Circuit breaker for Argon stalls, plus the state the admin panel reports.
+ 
+-A hung Argon request burns its full timeout (360 s non-stream, 240 s to the first chunk) and the account is only
+-cooled down for a few seconds, so every request that follows a stall waits out the same timeout again. With the
+-Flash fallback on, requests arriving within ``argon_stall_breaker_seconds`` of a stall go straight to Flash; the
+-first request after the window probes Argon again (a stall re-trips the breaker, a success needs no action).
+-Set ``ARGON_STALL_BREAKER_SECONDS=0`` to disable.
++A hung Argon request burns its whole timeout (``ARGON_TIMEOUT``, 360 s by default) and the account is only
++cooled down for a few seconds, so every request that follows a stall would wait out the same timeout again.
++While the breaker is open, Argon requests are served by ``settings.argon_fallback_model`` -- and that
++substitution is never silent: ``argon_fallback`` marks the response (``X-Gemini2API-*`` headers, a
++``serve_marker`` frame in streams) and logs it. ``GET /admin/status`` reports this state, ``POST
++/admin/argon/reset`` closes the breaker by hand (useful right after a Google-side incident).
++
++Set ``ARGON_STALL_BREAKER_SECONDS=0`` to disable the breaker, or ``ARGON_FALLBACK_TO_FLASH=false`` to remove
++the substitution entirely (Argon errors are then surfaced to the client as-is).
+ """
+ from __future__ import annotations
+ 
+ import logging
++import threading
+ import time
++from datetime import datetime, timezone
+ 
+ from app.config import settings
+ 
+ logger = logging.getLogger(__name__)
+ 
+-_open_until = 0.0
++_lock = threading.Lock()
++_open_until = 0.0            # time.monotonic() deadline, 0.0 = closed
++_reason = ""                 # machine-readable tag of the stall that opened it
++_note = ""                   # short human hint (exception type), never a full traceback
++_opened_at: float | None = None
++_trips = 0
++_last_trip_wall: str = ""
+ 
+ 
+ def _ttl() -> float:
+@@ -25,22 +37,63 @@ def _ttl() -> float:
+         return 0.0
+ 
+ 
+-def trip() -> None:
+-    """Record an Argon stall (a request that hit its timeout)."""
+-    global _open_until
++def enabled() -> bool:
++    """True when a stall can open the breaker at all (TTL set and the Flash fallback available)."""
++    return _ttl() > 0 and bool(getattr(settings, "argon_fallback_to_flash", True))
++
++
++def trip(reason: str = "timeout", note: str = "") -> None:
++    """Record an Argon stall and open the breaker for ``ARGON_STALL_BREAKER_SECONDS``.
++
++    ``reason`` is a short tag ("first-frame", "timeout"), ``note`` an optional hint such as the exception type.
++    """
++    global _open_until, _reason, _note, _opened_at, _trips, _last_trip_wall
+     ttl = _ttl()
+-    if ttl > 0:
++    with _lock:
++        _trips += 1
++        _last_trip_wall = datetime.now(timezone.utc).isoformat(timespec="seconds")
++        if ttl <= 0:
++            return
+         _open_until = time.monotonic() + ttl
+-        logger.warning(f"Argon stalled: serving the Flash fallback for the next {ttl:.0f}s")
++        _reason = reason or "timeout"
++        _note = note or ""
++        _opened_at = time.time()
++    logger.warning(
++        f"Argon stalled ({reason or 'timeout'}{', ' + note if note else ''}): serving the Flash fallback "
++        f"for the next {ttl:.0f}s (ARGON_STALL_BREAKER_SECONDS)"
++    )
+ 
+ 
+ def is_open() -> bool:
+     """True while Argon requests should be served by the Flash fallback instead."""
+-    return (_ttl() > 0
++    return (enabled()
+             and bool(getattr(settings, "argon_fallback_to_flash", True))
+             and time.monotonic() < _open_until)
+ 
+ 
+ def reset() -> None:
+-    global _open_until
+-    _open_until = 0.0
++    """Close the breaker (manual reset, and test isolation)."""
++    global _open_until, _reason, _note, _opened_at
++    with _lock:
++        _open_until = 0.0
++        _reason = ""
++        _note = ""
++        _opened_at = None
++
++
++def snapshot() -> dict:
++    """Breaker state for ``/admin/status`` -- never raises, safe to call from a request handler."""
++    open_ = is_open()
++    left = max(0.0, _open_until - time.monotonic())
++    return {
++        "enabled": enabled(),
++        "open": open_,
++        "ttl_seconds": _ttl(),
++        "seconds_left": round(left, 1) if open_ else 0.0,
++        "reason": _reason if open_ else "",
++        "note": _note if open_ else "",
++        "opened_at": (datetime.fromtimestamp(_opened_at, timezone.utc).isoformat(timespec="seconds")
++                      if (open_ and _opened_at) else ""),
++        "trips": _trips,
++        "last_trip_at": _last_trip_wall,
++    }
+diff --git a/app/core/argon_fallback.py b/app/core/argon_fallback.py
+index a5b09c4..af4b6c8 100644
+--- a/app/core/argon_fallback.py
++++ b/app/core/argon_fallback.py
+@@ -1,8 +1,18 @@
+-"""Argon -> Flash fallback for the Claude (/v1/messages) and native Gemini routers.
++"""Argon -> Flash fallback, shared by the Claude (/v1/messages) and native Gemini routers.
+ 
+-openai.py and responses.py carry this logic inline. These two routers share this helper so that an Argon
+-failure (error, hang, empty reply, web-error text) degrades to ``settings.argon_fallback_model`` instead of
+-reaching the client, controlled by the same settings: ``argon_fallback_to_flash`` and ``argon_always_fallback``.
++One contract, one implementation: whenever an Argon request is served by something other than Argon -- because
++the caller asked for it (``ARGON_ALWAYS_FALLBACK``), the stall breaker is open (``argon_breaker``), or Argon
++failed / timed out / returned an empty or Google-web-error reply -- the substitution is *observable*:
++
++* non-streaming: the result dict carries ``argon_fallback = {"served_by", "reason"}`` and the router adds the
++  ``X-Gemini2API-Arg...`` response headers;
++* streaming: the first frame yielded is ``{"type": "serve_marker", ...}`` before any content (a substitution
++  after content started is impossible by construction, streams never switch mid-flight);
++* both: a WARNING log line.
++
++Nothing degrades quietly: a failed fallback re-raises the original error (never an empty completion), and a
++stream that ends with no answer first gets one full non-streaming Argon retry (the hang that opened the breaker
++is already reported, so retrying costs 1x the generation timeout, not 2x) before the fallback is used.
+ """
+ from __future__ import annotations
+ 
+@@ -16,90 +26,209 @@ from app.core.gemini_client import GOOGLE_WEB_ERROR_PHRASES, UPSTREAM_ERRORS
+ 
+ logger = logging.getLogger(__name__)
+ 
++SERVED_BY_ARGON = "argon"
++SERVED_BY_FLASH = "gemini-flash-thinking"   # the family, not the alias, so clients can branch on it
++STREAM_MAY_SUBSTITUTE = "argon-or-gemini-flash-thinking"
+ 
+-def plan(requested_model: str, resolved_model: str) -> tuple[str, bool, bool]:
+-    """Return ``(model_to_use, is_argon, force_thinking)`` for a request.
++# A substitution must be visible to the client, not only in the logs.
++SERVED_HEADER = "X-Gemini2API-Argon-Served-By"
++REASON_HEADER = "X-Gemini2API-Argon-Fallback-Reason"
++
++
++def plan_headers(served_by: str) -> dict:
++    """Headers for a substitution decided before the request ran (always-fallback / stall breaker)."""
++    if served_by == SERVED_BY_ARGON:
++        return {}
++    return {SERVED_HEADER: served_by, REASON_HEADER: served_by}
++
++
++def result_headers(result) -> dict:
++    """Headers describing an Argon fallback that already happened (empty when Argon answered itself)."""
++    marker = result.get("argon_fallback") if isinstance(result, dict) else None
++    if not marker:
++        return {}
++    return {SERVED_HEADER: str(marker.get("served_by") or ""), REASON_HEADER: str(marker.get("reason") or "")}
++
++
++def stream_headers(is_argon: bool) -> dict:
++    """A stream cannot know in advance whether Argon will need the fallback, so the header states the
++    possibility; the exact substitution arrives as a comment frame inside the stream (see
++    ``generate_stream``'s ``serve_marker`` event)."""
++    if not is_argon:
++        return {}
++    if enabled(is_argon):
++        return {SERVED_HEADER: STREAM_MAY_SUBSTITUTE}
++    return {SERVED_HEADER: SERVED_BY_ARGON}
++
++
++def marker_frame(evt: dict) -> str:
++    """SSE comment frame announcing that this stream is served by the fallback model."""
++    return (f": gemini2api argon_fallback served_by={evt.get('served_by')} "
++            f"reason={evt.get('reason')}\n\n")
+ 
+-    With ``argon_always_fallback`` (or while the stall breaker is open) the fallback model is served directly
+-    (thinking on) and the request is no longer treated as Argon, mirroring openai.py.
+-    """
+-    is_argon = "argon" in (requested_model or "").lower() or "argon" in (resolved_model or "").lower()
+-    if is_argon and (getattr(settings, "argon_always_fallback", False) or argon_breaker.is_open()):
+-        logger.info(f"Argon requested ('{requested_model}'), but argon_always_fallback or the stall breaker is "
+-                    f"active. Serving {settings.argon_fallback_model}.")
+-        return settings.argon_fallback_model, False, True
+-    return resolved_model, is_argon, False
+ 
++def is_argon_model(model: str) -> bool:
++    return "argon" in (model or "").lower()
+ 
+-def _enabled(is_argon: bool) -> bool:
++
++def plan(requested_model: str, resolved_model: str) -> tuple[str, bool, bool, str]:
++    """Return ``(model_to_use, is_argon, force_thinking, served_by)`` for a request.
++
++    ``served_by`` is ``"argon"`` for a real Argon attempt, otherwise the value that goes into the
++    ``X-Gemini2API-Arg-Served-By`` header (``"stall_breaker"`` or ``"argon_always_fallback"``).
++    """
++    is_argon = is_argon_model(requested_model) or is_argon_model(resolved_model)
++    if is_argon and getattr(settings, "argon_always_fallback", False):
++        logger.warning(f"Argon requested ('{requested_model}') but ARGON_ALWAYS_FALLBACK=true: "
++                       f"serving {settings.argon_fallback_model}")
++        return settings.argon_fallback_model, False, True, "argon_always_fallback"
++    if is_argon and argon_breaker.is_open():
++        snap = argon_breaker.snapshot()
++        logger.warning(f"Argon requested ('{requested_model}') but the stall breaker is open "
++                       f"({snap.get('reason') or 'stall'}, {snap.get('seconds_left')}s left): "
++                       f"serving {settings.argon_fallback_model}")
++        return settings.argon_fallback_model, False, True, "stall_breaker"
++    return resolved_model, is_argon, False, SERVED_BY_ARGON
++
++
++def enabled(is_argon: bool) -> bool:
++    """True when an Argon failure should be retried on the fallback model."""
+     return bool(is_argon and getattr(settings, "argon_fallback_to_flash", True))
+ 
+ 
+-def _unusable(result: Any) -> bool:
+-    """Empty reply, or a reply that is just a Google web error message."""
++def unusable(result: Any) -> bool:
++    """Empty reply (no text, no images), or a reply that is just a Google web error message."""
+     if is_empty_result(result):
+         return True
+     text = (result.get("text") or "").strip()
+     return bool(text) and any(text.startswith(p) for p in GOOGLE_WEB_ERROR_PHRASES)
+ 
+ 
+-async def generate(pool, prompt: str, model: str, attachments, *, is_argon: bool, thinking: bool = False,
+-                   gem_id=None, account_id=None) -> dict:
+-    """``pool.generate`` with the Argon -> Flash fallback. Raises the fallback's error if both fail."""
++def mark(result: dict, served_by: str, reason: str) -> dict:
++    """Attach the fallback marker to a result dict (safe on dicts that came out of the pool)."""
++    if isinstance(result, dict):
++        result["argon_fallback"] = {"served_by": served_by, "reason": reason}
++    return result
++
++
++def is_web_error(result: Any) -> bool:
++    text = ((result or {}).get("text") or "").strip() if isinstance(result, dict) else ""
++    return bool(text) and any(text.startswith(p) for p in GOOGLE_WEB_ERROR_PHRASES)
++
++
++async def _generate(pool, prompt, model, attachments, *, thinking=False, conversation_id="",
++                    gem_id=None, account_id=None):
+     kw = {"extended_thinking": True} if thinking else {}
+-    use_fallback = _enabled(is_argon)
++    return await pool.generate(prompt, model, conversation_id, attachments,
++                               gem_id=gem_id, account_id=account_id, **kw)
++
++
++async def _generate_stream(pool, prompt, model, attachments, *, thinking=False, conversation_id="",
++                           gem_id=None, account_id=None):
++    kw = {"extended_thinking": True} if thinking else {}
++    async for evt in pool.generate_stream(prompt, model, conversation_id, attachments,
++                                          gem_id=gem_id, account_id=account_id, **kw):
++        yield evt
++
++
++async def generate(pool, prompt: str, model: str, attachments, *, is_argon: bool, thinking: bool = False,
++                   conversation_id: str = "", gem_id=None, account_id=None,
++                   served_by: str = SERVED_BY_ARGON) -> dict:
++    """``pool.generate`` with the Argon -> Flash fallback.
++
++    Raises the fallback's error when both fail -- never returns an empty result when the fallback was on.
++    """
++    if not enabled(is_argon):
++        return await _generate(pool, prompt, model, attachments, thinking=thinking,
++                               conversation_id=conversation_id, gem_id=gem_id, account_id=account_id)
++
++    fb = settings.argon_fallback_model
+     try:
+-        result = await pool.generate(prompt, model, "", attachments, gem_id=gem_id, account_id=account_id, **kw)
++        result = await _generate(pool, prompt, model, attachments, thinking=thinking,
++                                 conversation_id=conversation_id, gem_id=gem_id, account_id=account_id)
+     except UPSTREAM_ERRORS as e:
+-        if not use_fallback:
+-            raise
+-        logger.warning(f"Argon request failed ({e}), falling back to {settings.argon_fallback_model}")
+-        return await pool.generate(prompt, settings.argon_fallback_model, "", attachments,
+-                                   gem_id=gem_id, account_id=account_id, extended_thinking=True)
+-    if use_fallback and _unusable(result):
+-        logger.warning(f"Argon returned an empty or web-error reply, falling back to {settings.argon_fallback_model}")
+-        return await pool.generate(prompt, settings.argon_fallback_model, "", attachments,
+-                                   gem_id=gem_id, account_id=account_id, extended_thinking=True)
+-    return result
++        logger.warning(f"Argon request failed ({type(e).__name__}: {e}); falling back to {fb}")
++        return mark(await _generate(pool, prompt, fb, attachments, thinking=True,
++                                    conversation_id=conversation_id, gem_id=gem_id, account_id=account_id),
++                    SERVED_BY_FLASH, "argon_error")
++
++    if not unusable(result):
++        return result
++
++    why = "empty_reply" if is_empty_result(result) else "google_web_error"
++    logger.warning(f"Argon returned {why} ({(result.get('text') or '')[:60]!r}); falling back to {fb}")
++    return mark(await _generate(pool, prompt, fb, attachments, thinking=True,
++                                conversation_id=conversation_id, gem_id=gem_id, account_id=account_id),
++                SERVED_BY_FLASH, why)
+ 
+ 
+ async def generate_stream(pool, prompt: str, model: str, attachments, *, is_argon: bool, thinking: bool = False,
+-                          gem_id=None, account_id=None) -> AsyncGenerator[dict, None]:
+-    """``pool.generate_stream`` with the Argon -> Flash fallback.
++                          conversation_id: str = "", gem_id=None, account_id=None,
++                          served_by: str = SERVED_BY_ARGON) -> AsyncGenerator[dict, None]:
++    """``pool.generate_stream`` with the Argon -> Flash fallback and an explicit serve marker.
+ 
+     The fallback only starts while nothing has been streamed to the client: an upstream error before the first
+-    content, or a stream that ends with no answer. Once content has gone out, errors propagate unchanged.
++    content, or a stream that ends with no answer at all. Once content has gone out, errors propagate unchanged.
++    A dead Argon stream first gets one full non-streaming retry on Argon (that request also refreshes the
++    conversation state); only if that fails too does Flash take over.
+     """
+-    kw = {"extended_thinking": True} if thinking else {}
+-    if not _enabled(is_argon):
+-        async for evt in pool.generate_stream(prompt, model, "", attachments,
+-                                              gem_id=gem_id, account_id=account_id, **kw):
++    if not enabled(is_argon):
++        async for evt in _generate_stream(pool, prompt, model, attachments, thinking=thinking,
++                                          conversation_id=conversation_id, gem_id=gem_id, account_id=account_id):
+             yield evt
+         return
+ 
++    fb = settings.argon_fallback_model
+     streamed = False
++    failure: tuple[str, Exception | None] = ("empty_stream", None)
+     try:
+-        async for evt in pool.generate_stream(prompt, model, "", attachments,
+-                                              gem_id=gem_id, account_id=account_id, **kw):
++        async for evt in _generate_stream(pool, prompt, model, attachments, thinking=thinking,
++                                          conversation_id=conversation_id, gem_id=gem_id, account_id=account_id):
+             kind = evt.get("type")
+             if kind == "delta":
+                 if evt.get("text"):
+                     streamed = True
++            elif kind == "thoughts":
++                continue  # thoughts alone are not an answer; never let them decide "streamed"
+             elif kind == "final":
+                 if (evt.get("text") or "").strip() or evt.get("images"):
+                     streamed = True
+                 elif not streamed:
+-                    continue  # empty answer: hold it back, the Flash stream below replaces it
++                    continue  # empty answer: hold it back, the fallback below replaces it
+             yield evt
+     except Exception as e:
+         if streamed:
+             raise
+-        logger.warning(f"Argon stream failed before first chunk ({e}), falling back to {settings.argon_fallback_model}")
+-    else:
+-        if streamed:
+-            return
+-        logger.warning(f"Argon stream ended without any answer, falling back to {settings.argon_fallback_model}")
++        failure = ("argon_error", e)
+ 
+-    async for evt in pool.generate_stream(prompt, settings.argon_fallback_model, "", attachments,
+-                                          gem_id=gem_id, account_id=account_id, extended_thinking=True):
++    if streamed:
++        return
++
++    if failure[1] is not None:
++        logger.warning(f"Argon stream failed before the first chunk ({type(failure[1]).__name__}: "
++                       f"{failure[1]}); falling back to {fb}")
++    else:
++        # No exception, just no answer: one plain Argon retry before the model swap. The hang that opened
++        # the stall breaker was already reported, so this retry is not the "wait out the same timeout twice"
++        # case the breaker exists for -- and it may well be the empty-frame case the retry actually fixes.
++        logger.warning(f"Argon stream ended without an answer; retrying Argon once (non-streaming) before {fb}")
++        try:
++            retry = await _generate(pool, prompt, model, attachments, thinking=thinking,
++                                    conversation_id=conversation_id, gem_id=gem_id, account_id=account_id)
++            if not unusable(retry):
++                text = retry.get("text") or ""
++                if text:
++                    yield {"type": "delta", "text": text}
++                yield {"type": "thoughts", "text": retry.get("thoughts") or ""}
++                yield {"type": "final", "text": text, "images": retry.get("images") or [],
++                       "thoughts": retry.get("thoughts") or "",
++                       "conversation_id": retry.get("conversation_id", "")}
++                return
++        except UPSTREAM_ERRORS as e2:
++            failure = ("argon_error", e2)
++        logger.warning(f"Argon retry also produced no answer; falling back to {fb}")
++
++    yield {"type": "serve_marker", "served_by": SERVED_BY_FLASH, "reason": failure[0]}
++    async for evt in _generate_stream(pool, prompt, fb, attachments, thinking=True,
++                                      conversation_id=conversation_id, gem_id=gem_id, account_id=account_id):
+         yield evt
+diff --git a/app/core/gemini_client.py b/app/core/gemini_client.py
+index cee18c2..c2d2604 100644
+--- a/app/core/gemini_client.py
++++ b/app/core/gemini_client.py
+@@ -27,6 +27,13 @@ _IMAGE_SIZE_DEFAULT = "=s2048"  # 2048px 边长足够预览，字节/耗时远
+ _GENERATE_TIMEOUT_DEFAULT = 180  # 普通对话 POST 超时（pro 深度思考常需 >60s）
+ _GENERATE_TIMEOUT_IMAGE = 180  # 生图 POST 超时（pro 常 >60s，flash 通常 <60s）
+ _GENERATE_TIMEOUT_ARGON = 360  # Argon 深度思考（mandatory test-time extended thinking）POST 超时
++# 流式路径：Argon 首帧（TTFT）通常 30–75s，偶发 >2 分钟。首帧前用 150s 包住（首帧之前本来就没有
++# 任何东西可以交给客户端），而「已有内容之后的静默」必须保持 240s：rt=c 会话下 Google 会保持
++# HTTP/2 流，之后还可能补上收尾帧；提前收尾 = 静默截断回答（对 tool_call JSON 更致命，截断即坏 JSON）。
++# evals/cases/test_argon_fallback.py::test_long_silence_is_covered_by_keepalive 就是这条不变量的守卫，
++# 请勿为了"更快"把它调小。
++_ARGON_FIRST_CHUNK_TIMEOUT = 150.0   # 首帧之前单次 aiter 等待（仅流式）
++_ARGON_STREAM_CHUNK_TIMEOUT = 240.0  # 已有内容后单次 aiter 等待（保持原值，见上）
+ 
+ 
+ class HTTPStatusError(Exception):
+@@ -83,6 +90,20 @@ GOOGLE_WEB_ERROR_PHRASES = (
+ _ERROR_TEMPLATE_MAX_TAIL = 90
+ 
+ 
++# Argon has one failure mode nothing else has: the stream completes, frames arrive, the reply is empty and no
++# exception is raised anywhere. ``generate_stream`` returns an empty final event and the routers (correctly)
++# do not fail over on a "successful" 200. We cannot recover the answer, but we must not let it look like a
++# normal, healthy reply either -- so it is counted and logged, and the counter is exposed to the admin panel.
++# The count is process-local on purpose (an empty reply that never fails over is what the metric is for).
++_argon_salvaged_results = 0
++
++
++def count_argon_salvaged_results() -> int:
++    """Number of Argon streams that completed with frames but produced no answer at all."""
++    return _argon_salvaged_results
++
++
++
+ def _is_google_error_reply(text: str) -> bool:
+     stripped = (text or "").strip()
+     if not stripped or "\n" in stripped:
+@@ -318,12 +339,6 @@ def _build_model_header(model_name: str) -> dict[str, str]:
+     }
+ 
+ 
+-def _build_model_header_thinking(model_name: str, session_uuid: str) -> dict[str, str]:
+-    """The 2026-10-13 protocol has a single header form for thinking and
+-    non-thinking requests alike; delegate to _build_model_header."""
+-    return _build_model_header(model_name)
+-
+-
+ MODELS_CACHE_FILE = Path("data/models_cache.json")
+ 
+ # 生图/找图时模型回复文本里会带这种 googleusercontent 占位 URL（无实际意义，
+@@ -531,6 +546,36 @@ def _rand_reqid() -> int:
+ 
+ 
+ 
++_continuation_drop_warned = False
++
++
++def _note_continuation_dropped(conversation_id: str) -> None:
++    """The 81-element thinking payload has no slot for a conversation to continue (inner[2] is the metadata
++    block, spec §4.3), so a stored ``conversation_id`` is ignored upstream. That used to be invisible: the
++    routers stripped the request down to the last user message because they believed the server held the
++    context, and the model silently answered without it. Logged once per process; the value itself is never
++    printed (it is an opaque Google-side id)."""
++    global _continuation_drop_warned
++    if _continuation_drop_warned:
++        return
++    _continuation_drop_warned = True
++    logger.warning(
++        "StreamGenerate thinking payload cannot continue a stored conversation (%d chars ignored): the "
++        "proxy therefore sends the full history (see SERVER_SIDE_CONTINUATION). This message is logged once.",
++        len(conversation_id or ""),
++    )
++
++
++def _argon_generate_timeout() -> float:
++    """Argon POST timeout: ARGON_TIMEOUT wins when set, else the built-in default (probes/tests rely on
++    the constant, so the default stays where it was)."""
++    try:
++        value = float(getattr(settings, "argon_timeout", 0) or 0)
++    except (TypeError, ValueError):
++        value = 0.0
++    return value if value > 0 else float(_GENERATE_TIMEOUT_ARGON)
++
++
+ def _is_timeout_error(exc: Exception) -> bool:
+     """True for a request that hung: builtin/asyncio timeouts, or libcurl's
+     CURLE_OPERATION_TIMEDOUT (28), which curl_cffi surfaces as RequestsError.code.
+@@ -1297,6 +1342,10 @@ class GeminiWebClient:
+ 
+     def _encode_payload(self, prompt: str, model: str, conversation_id: str = "",
+                         file_ids: list | None = None, gem_id: str | None = None) -> str:
++        """PR#310 legacy 4-element payload. NOT used at runtime any more: StreamGenerate black-holes it since
++        the 2026-10-13 Argon rollout, so every request goes through ``_encode_payload_thinking``. It is kept
++        because tests byte-compare it against the pre-Argon encoder (regression guard) and because it is the
++        reference for where a conversation id *would* go (``inner[2]``)."""
+         conv_param = conversation_id if conversation_id else None
+         if file_ids:
+             # 有附件：第 0 位用带文件的 message_content 替换纯 [prompt]
+@@ -1317,7 +1366,18 @@ class GeminiWebClient:
+ 
+     def _encode_payload_thinking(self, prompt: str, model: str, conversation_id: str = "",
+                                  file_ids: list | None = None, gem_id: str | None = None) -> tuple[str, str]:
+-        """PR#310 81-element thinking-path payload encoder (isolated from _encode_payload)."""
++        """PR#310 81-element thinking-path payload encoder (isolated from _encode_payload).
++
++        Returns ``(f.req, request_uuid)``. The UUID is minted here, stored at ``inner[59]`` and **must** be
++        the one echoed in the ``x-goog-ext-525005358-jspb`` companion header -- callers used to discard it and
++        mint a second, unrelated UUID for the header.
++
++        ``conversation_id`` is accepted for signature compatibility but the payload cannot continue a stored
++        conversation (no slot exists; ``inner[2]`` is the metadata block). See
++        ``_note_continuation_dropped`` and ``SERVER_SIDE_CONTINUATION``.
++        """
++        if conversation_id:
++            _note_continuation_dropped(conversation_id)
+         DEFAULT_METADATA = ["", "", "", None, None, None, None, None, None, ""]
+         if file_ids:
+             file_data = [[[fid], fname] for fid, fname in file_ids]
+@@ -1458,12 +1518,13 @@ class GeminiWebClient:
+         # Same 2026-10-13 protocol requirements as _send_request: 81-element
+         # thinking payload (Argon is mandatory-thinking), 15-element model
+         # header, companion headers, bl/f.sid URL params.
+-        encoded, _ = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
++        encoded, request_uuid = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
+         model_headers = _build_model_header(resolved)
+         headers = self._stream_generate_headers()
+         if model_headers:
+             headers.update(model_headers)
+-        headers["x-goog-ext-525005358-jspb"] = f'["{str(uuid.uuid4()).upper()}",1]'
++        # Companion header: the SAME per-request UUID the payload carries at inner[59]. Do not mint a new one.
++        headers["x-goog-ext-525005358-jspb"] = f'["{request_uuid}",1]'
+ 
+         buf = ""
+         emitted = ""             # 已 yield 出去的完整文本（用于和新帧比前缀算增量）
+@@ -1472,8 +1533,14 @@ class GeminiWebClient:
+         last_thoughts = ""       # 累积思维链（最新一帧的完整思考文本，final 兜底用）
+         emitted_thoughts = ""    # 已 yield 出去的思维链前缀（逐帧增量用）
+         last_images: list = []
+-        chunk_timeout = 240 if "argon" in resolved else 120      # 单个 chunk 最长等待（兜底 #215 timeout 失效）
+-        stream_timeout = _GENERATE_TIMEOUT_ARGON if "argon" in resolved else 180
++        is_argon = "argon" in resolved
++        # 首帧前用长超时（Argon TTFT 30–75s），首字节到达后用更短的超时：一条静默的上游不会把
++        # 客户端挂满 240s。两者对 failover/断路器都算 stall（见 account_pool._is_stall）。
++        first_chunk_timeout = _ARGON_FIRST_CHUNK_TIMEOUT if is_argon else 120
++        after_chunk_timeout = _ARGON_STREAM_CHUNK_TIMEOUT if is_argon else 120
++        stream_timeout = _argon_generate_timeout() if is_argon else 180
++        saw_bytes = False
++        saw_frame = False
+ 
+         # Warm shared session: at/bl/f.sid were minted on self._http in
+         # _obtain_session_token, so the POST must ride that same HTTP/2
+@@ -1495,31 +1562,34 @@ class GeminiWebClient:
+ 
+                     aiter = resp.aiter_content()
+                     while True:
++                        timeout_now = after_chunk_timeout if saw_bytes else first_chunk_timeout
+                         try:
+-                            chunk = await asyncio.wait_for(aiter.__anext__(), timeout=chunk_timeout)
++                            chunk = await asyncio.wait_for(aiter.__anext__(), timeout=timeout_now)
+                         except StopAsyncIteration:
+                             break
+                         except asyncio.TimeoutError:
+-                            # rt=c keep-alive: Google can hold the HTTP/2 stream
+-                            # open after the final frame. If content already
+-                            # streamed, finish cleanly instead of raising.
++                            # 已有内容后上游静默：rt=c keep-alive 下 Google 可能只是保持连接
++                            # （收尾帧已到），正常收尾更友好；但上游真的卡死也要说实话，
++                            # 日志里区分两种（truncated 与否由调用方的 final 文本体现）。
+                             if emitted:
+                                 logger.warning(
+                                     "generate_stream: no data for %ss after content started; "
+                                     "ending stream (emitted_chars=%d, unparsed_buf_chars=%d). "
+                                     "If the reply looks truncated, upstream may have stalled "
+                                     "before its final frame.",
+-                                    chunk_timeout, len(emitted), len(buf),
++                                    timeout_now, len(emitted), len(buf),
+                                 )
+                                 break
+                             raise
+                         if not chunk:
+                             continue
++                        saw_bytes = True
+                         buf += chunk.decode("utf-8", "replace")
+                         frames, consumed = _scan_complete_wrb_frames(buf)
+                         if consumed:
+                             buf = buf[consumed:]
+                         for elem in frames:
++                            saw_frame = True
+                             text, conv, thoughts = _extract_text_from_wrb(elem)
+                             if conv:
+                                 last_conv = conv
+@@ -1634,15 +1704,16 @@ class GeminiWebClient:
+         # with companion headers; the legacy 4-element payload is silently
+         # black-holed (probe5/probe6). Argon is a mandatory-thinking model, so
+         # inner[80]=2 unconditionally, regardless of extended_thinking.
+-        encoded, _ = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
++        encoded, request_uuid = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
+         model_headers = _build_model_header(resolved)
+         headers = self._stream_generate_headers()
+         if model_headers:
+             headers.update(model_headers)
+-        headers["x-goog-ext-525005358-jspb"] = f'["{str(uuid.uuid4()).upper()}",1]'
++        # Companion header: the SAME per-request UUID the payload carries at inner[59]. Do not mint a new one.
++        headers["x-goog-ext-525005358-jspb"] = f'["{request_uuid}",1]'
+ 
+         gen_timeout = (
+-            _GENERATE_TIMEOUT_ARGON if "argon" in resolved
++            _argon_generate_timeout() if "argon" in resolved
+             else _GENERATE_TIMEOUT_IMAGE if maybe_image_generation_intent(prompt)
+             else _GENERATE_TIMEOUT_DEFAULT
+         )
+diff --git a/app/core/settings_overrides.py b/app/core/settings_overrides.py
+index 3323b4d..804e2af 100644
+--- a/app/core/settings_overrides.py
++++ b/app/core/settings_overrides.py
+@@ -53,6 +53,12 @@ EDITABLE_FIELDS = {
+     "chat_cleanup_skip_pinned",
+     "extended_thinking_enabled",
+     "log_bodies_enabled",
++    # Argon / agent-loop knobs (see .env.example): the anti-stall guard and the prompt-merge mode are the
++    # two switches a coding-harness operator actually flips, so they belong in the panel.
++    "argon_system_prompt_mode",
++    "argon_timeout",
++    "tool_loop_reminder",
++    "tool_loop_stall_guard",
+ }
+ 
+ # 字段声明类型，用于类型校验与 JSON 数值收敛。
+@@ -77,6 +83,10 @@ FIELD_TYPES = {
+     "chat_cleanup_skip_pinned": bool,
+     "extended_thinking_enabled": bool,
+     "log_bodies_enabled": bool,
++    "argon_system_prompt_mode": str,
++    "argon_timeout": int,
++    "tool_loop_reminder": bool,
++    "tool_loop_stall_guard": bool,
+ }
+ 
+ # Runtime toggles that have their own dedicated switch outside the settings panel. They are
+diff --git a/app/routers/admin.py b/app/routers/admin.py
+index 422693f..4814592 100644
+--- a/app/routers/admin.py
++++ b/app/routers/admin.py
+@@ -11,9 +11,10 @@ from fastapi import APIRouter, Request
+ from fastapi.responses import JSONResponse
+ from pydantic import BaseModel
+ 
+-from app.config import APP_VERSION, mask_secret
++from app.config import APP_VERSION, mask_secret, settings
+ from app.core.account_pool import account_pool, AccountStatus
+-from app.core.gemini_client import GeminiWebClient
++from app.core import agent_loop, argon_breaker
++from app.core.gemini_client import GeminiWebClient, count_argon_salvaged_results
+ 
+ logger = logging.getLogger(__name__)
+ router = APIRouter(prefix="/admin", tags=["Admin"])
+@@ -96,7 +97,27 @@ async def reload_cookies(req: ReloadCookiesRequest = None):
+ 
+ @router.get("/status")
+ async def admin_status():
+-    return _masked_status()
++    """Account pool + the Argon/agent-loop state an operator needs to explain "it got slow" or "it answered
++    nothing": which model Argon requests will be served by right now, how often the loop needed rescuing, and
++    how many Argon replies came back with frames but no answer at all."""
++    status = _masked_status()
++    status["argon"] = argon_breaker.snapshot()
++    status["agent_loop"] = agent_loop.stats()
++    status["agent_loop"]["tool_loop_reminder"] = bool(getattr(settings, "tool_loop_reminder", True))
++    status["agent_loop"]["stall_guard"] = bool(getattr(settings, "tool_loop_stall_guard", True))
++    status["agent_loop"]["salvaged_empty_streams"] = count_argon_salvaged_results()
++    status["agent_loop"]["fallback_model"] = settings.argon_fallback_model
++    return status
++
++
++@router.post("/argon/reset")
++async def reset_argon_breaker():
++    """Close the Argon stall breaker by hand (e.g. right after a Google-side incident is over) so Argon is
++    probed again on the next request instead of waiting out ARGON_STALL_BREAKER_SECONDS."""
++    was_open = argon_breaker.is_open()
++    argon_breaker.reset()
++    logger.warning(f"Argon stall breaker manually reset (was_open={was_open})")
++    return {"success": True, "was_open": was_open, "argon": argon_breaker.snapshot()}
+ 
+ 
+ @router.get("/system-info")
+diff --git a/app/routers/claude.py b/app/routers/claude.py
+index 2d34268..59d1b41 100644
+--- a/app/routers/claude.py
++++ b/app/routers/claude.py
+@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
+ from app.config import settings
+ from app.core.account_pool import account_pool as gemini_client
+ from app.core.gemini_client import HTTPStatusError, UPSTREAM_ERRORS, classify_error
+-from app.core import argon_fallback
++from app.core import agent_loop, argon_fallback
+ from app.core.stream import split_into_chunks, iter_with_keepalive, SSE_KEEPALIVE_FRAME, sse_keepalive_during
+ from app.models.claude import (
+     ClaudeRequest, ClaudeResponse, ContentBlock, ClaudeUsage,
+@@ -19,7 +19,7 @@ from app.models.claude import (
+ )
+ from app.routers.openai import _images_to_markdown
+ from app.utils.tools import build_tool_prompt, parse_tool_response_with_retry, estimate_tokens, is_image_generation_intent
+-from app.utils.prompt import build_prompt_from_messages, extract_attachments, last_user_text
++from app.utils.prompt import argon_system_text, build_prompt_from_messages, extract_attachments, last_user_text
+ from app.core.limiter import limiter, dynamic_rate_limit, rate_limit_exempt
+ 
+ logger = logging.getLogger(__name__)
+@@ -98,14 +98,18 @@ async def create_message(req: ClaudeRequest, request: Request):
+ 
+     # Same condition as in openai.py: judged on the *requested* model, so the prompt still applies when the
+     # request is served by the Flash fallback (always-fallback / stall breaker).
+-    wants_argon = "argon" in req.model.lower() or "argon" in resolved_model.lower()
+-    resolved_model, is_argon, force_thinking = argon_fallback.plan(req.model, resolved_model)
+-
+-    # ARGON_SYSTEM_PROMPT: only when the caller sent no system prompt. Built before build_tool_prompt below,
+-    # which wraps the whole prompt.
+-    _argon_sys = (getattr(settings, "argon_system_prompt", "") or "").strip()
+-    if wants_argon and _argon_sys and not req.system:
+-        prompt = build_prompt_from_messages(messages_raw, system=_argon_sys)
++    resolved_model, is_argon, force_thinking, argon_served_by = argon_fallback.plan(req.model, resolved_model)
++    _pre_headers = argon_fallback.plan_headers(argon_served_by)
++
++    # ARGON_SYSTEM_PROMPT: merged in front of the caller's own system prompt by default — coding harnesses
++    # always send theirs, and the old "skip when the caller sent one" rule abandoned the Argon rules exactly
++    # there. Built before build_tool_prompt below, which wraps the whole prompt.
++    if argon_fallback.is_argon_model(req.model):
++        _combined = argon_system_text(req.system or "",
++                                      getattr(settings, "argon_system_prompt", ""),
++                                      getattr(settings, "argon_system_prompt_mode", "merge"))
++        if _combined:
++            prompt = build_prompt_from_messages(messages_raw, system=_combined)
+ 
+     has_tools = bool(req.tools)
+     # 生图意图优先：带 tools 但明确生图意图时跳过工具模拟，直接生图（否则生图被压制）。
+@@ -135,7 +139,8 @@ async def create_message(req: ClaudeRequest, request: Request):
+             _stream_claude(prompt, resolved_model, has_tools, attachments, req.model, gem_id, gem_account_id,
+                           request=request, is_argon=is_argon, thinking=force_thinking),
+             media_type="text/event-stream",
+-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
++            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
++                     **argon_fallback.stream_headers(is_argon), **_pre_headers},
+         )
+ 
+     try:
+@@ -155,12 +160,19 @@ async def create_message(req: ClaudeRequest, request: Request):
+     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
+ 
+     if has_tools:
+-        async def _regenerate_for_tools() -> str:
+-            r = await argon_fallback.generate(gemini_client, prompt, resolved_model, attachments,
+-                                              is_argon=is_argon, thinking=force_thinking,
++        served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
++        retry_model = settings.argon_fallback_model if served else resolved_model
++        retry_is_argon = is_argon and not served
++
++        async def _regenerate_for_tools(nudge: str = "") -> str:
++            r = await argon_fallback.generate(gemini_client, prompt + nudge, retry_model, attachments,
++                                              is_argon=retry_is_argon, thinking=force_thinking,
+                                               gem_id=gem_id, account_id=gem_account_id)
+             return r.get("text", "")
+ 
++        # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
++        text, _stall_corrected = await agent_loop.guard_tool_loop(
++            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True))
+         parsed = await parse_tool_response_with_retry(text, _regenerate_for_tools)
+         if parsed["type"] == "tool_calls":
+             blocks = []
+@@ -197,7 +209,7 @@ async def create_message(req: ClaudeRequest, request: Request):
+     # 用单空格占位，恰好一块，不改变非空/纯空白文本的既有行为。
+     blocks = [ContentBlock(type="text", text=text if text else " ")]
+ 
+-    return ClaudeResponse(
++    body = ClaudeResponse(
+         id=msg_id,
+         model=req.model,
+         content=blocks,
+@@ -207,6 +219,10 @@ async def create_message(req: ClaudeRequest, request: Request):
+             output_tokens=estimate_tokens(text),
+         ),
+     )
++    hdr = {**_pre_headers, **argon_fallback.result_headers(result)}
++    if hdr:
++        return JSONResponse(content=body.model_dump(), headers=hdr)
++    return body
+ 
+ 
+ @router.post("/messages/count_tokens")
+@@ -262,6 +278,11 @@ async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=N
+             if _kind == "ping":
+                 yield SSE_KEEPALIVE_FRAME
+                 continue
++            if evt.get("type") == "serve_marker":
++                logger.warning(f"Argon -> {evt.get('served_by')} ({evt.get('reason')}): "
++                               f"stream served by the fallback model")
++                yield argon_fallback.marker_frame(evt)
++                continue
+             if evt.get("type") == "delta":
+                 # generate_stream 现在是严格 append-only（不再发 _replace），delta 总是新增尾部
+                 delta = evt.get("text", "")
+@@ -388,12 +409,30 @@ async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, atta
+ 
+     if has_tools:
+         # message_start 已发出，但还没发任何 content 块，此处重试是安全的。
+-        async def _regenerate_for_tools() -> str:
+-            r = await argon_fallback.generate(gemini_client, prompt, model, attachments,
+-                                              is_argon=is_argon, thinking=thinking,
++        # 已经被 Flash 兜底过的请求不再重试 Argon（避免又吃一次 360s 超时）。
++        served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
++        retry_model = settings.argon_fallback_model if served else model
++        retry_is_argon = is_argon and not served
++
++        async def _regenerate_for_tools(nudge: str = "") -> str:
++            r = await argon_fallback.generate(gemini_client, prompt + nudge, retry_model, attachments,
++                                              is_argon=retry_is_argon, thinking=thinking,
+                                               gem_id=gem_id, account_id=account_id)
+             return r.get("text", "")
+ 
++        # Agent-loop guard: 只承诺不动手的回复会让 harness 结束回合，这里纠正一次。
++        guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
++            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True)))
++        try:
++            async for ping in sse_keepalive_during(guard_task):
++                yield ping
++        except BaseException:
++            guard_task.cancel()
++            if guard_task.done() and not guard_task.cancelled():
++                guard_task.exception()
++            raise
++        text, _stall_corrected = guard_task.result()
++
+         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——message_start 已经发出、
+         # 这条流早就开了，裸 await 会在已开的连接上制造一次远超单个 keepalive 间隔的
+         # 死寂（issue #10 followup F2）。用与上面 gen_task 相同的 task + keepalive 套路续心跳。
+diff --git a/app/routers/gemini.py b/app/routers/gemini.py
+index aa4882f..c256a06 100644
+--- a/app/routers/gemini.py
++++ b/app/routers/gemini.py
+@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
+ from app.config import settings
+ from app.core.account_pool import account_pool as gemini_client
+ from app.core.gemini_client import HTTPStatusError, UPSTREAM_ERRORS, classify_error
+-from app.core import argon_fallback
++from app.core import agent_loop, argon_fallback
+ from app.core.stream import split_into_chunks, iter_with_keepalive, sse_keepalive_during
+ from app.models.gemini import (
+     GeminiRequest,
+@@ -22,7 +22,7 @@ from app.models.gemini import (
+     GeminiModelList,
+ )
+ from app.utils.tools import build_tool_prompt, parse_tool_response_with_retry, estimate_tokens, is_image_generation_intent
+-from app.utils.prompt import build_prompt_from_messages
++from app.utils.prompt import argon_system_text, build_prompt_from_messages
+ from app.core.limiter import limiter, dynamic_rate_limit, rate_limit_exempt
+ 
+ logger = logging.getLogger(__name__)
+@@ -202,10 +202,16 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
+             gem_account_id = gem_info.get("account_id") or None
+             model = gem_info.get("base_model") or "gemini-pro"
+ 
+-    model, is_argon, force_thinking = argon_fallback.plan(model, model)
++    model, is_argon, force_thinking, argon_served_by = argon_fallback.plan(model, model)
++    _pre_headers = argon_fallback.plan_headers(argon_served_by)
+ 
+     messages, attachments = _parse_contents(req.contents)
+     system = _parse_system(req.system_instruction)
++    if argon_fallback.is_argon_model(model):
++        # Merge the Argon rules in front of the caller's system instruction (ARGON_SYSTEM_PROMPT_MODE);
++        # coding harnesses always send their own, which used to disable the Argon rules silently.
++        system = argon_system_text(system, getattr(settings, "argon_system_prompt", ""),
++                                   getattr(settings, "argon_system_prompt_mode", "merge"))
+     prompt = build_prompt_from_messages(messages, system=system)
+ 
+     has_tools = False
+@@ -239,12 +245,20 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
+     # 工具调用：解析成 Gemini 原生 functionCall part（而非把工具 JSON 当文本塞回去）
+     tool_parts = []
+     if has_tools:
+-        async def _regenerate_for_tools() -> str:
+-            r = await argon_fallback.generate(gemini_client, prompt, model, attachments,
+-                                              is_argon=is_argon, thinking=force_thinking,
++        served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
++        retry_model = settings.argon_fallback_model if served else model
++        retry_is_argon = is_argon and not served
++
++        async def _regenerate_for_tools(nudge: str = "") -> str:
++            r = await argon_fallback.generate(gemini_client, prompt + nudge, retry_model, attachments,
++                                              is_argon=retry_is_argon, thinking=force_thinking,
+                                               gem_id=gem_id, account_id=gem_account_id)
+             return r.get("text", "")
+ 
++        # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
++        response_text, _stall_corrected = await agent_loop.guard_tool_loop(
++            response_text, _regenerate_for_tools,
++            enabled=getattr(settings, "tool_loop_stall_guard", True))
+         parsed = await parse_tool_response_with_retry(response_text, _regenerate_for_tools)
+         if isinstance(parsed, dict):
+             if parsed.get("type") == "tool_calls":
+@@ -293,6 +307,9 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
+         },
+     }
+ 
++    _hdr = {**_pre_headers, **argon_fallback.result_headers(result)}
++    if _hdr:
++        return JSONResponse(content=gemini_response, headers=_hdr)
+     return JSONResponse(content=gemini_response)
+ 
+ 
+@@ -314,10 +331,16 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
+             gem_account_id = gem_info.get("account_id") or None
+             model = gem_info.get("base_model") or "gemini-pro"
+ 
+-    model, is_argon, force_thinking = argon_fallback.plan(model, model)
++    model, is_argon, force_thinking, argon_served_by = argon_fallback.plan(model, model)
++    _pre_headers = argon_fallback.plan_headers(argon_served_by)
+ 
+     messages, attachments = _parse_contents(req.contents)
+     system = _parse_system(req.system_instruction)
++    if argon_fallback.is_argon_model(model):
++        # Merge the Argon rules in front of the caller's system instruction (ARGON_SYSTEM_PROMPT_MODE);
++        # coding harnesses always send their own, which used to disable the Argon rules silently.
++        system = argon_system_text(system, getattr(settings, "argon_system_prompt", ""),
++                                   getattr(settings, "argon_system_prompt_mode", "merge"))
+     prompt = build_prompt_from_messages(messages, system=system)
+ 
+     has_tools = False
+@@ -373,13 +396,32 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
+                 # 比修复前（只发降级提示）更糟。未发生重试时 _retried 为空，行为逐字节不变。
+                 _retried = {}
+ 
+-                async def _regenerate_for_tools() -> str:
+-                    r = await argon_fallback.generate(gemini_client, prompt, model, attachments,
+-                                                      is_argon=is_argon, thinking=force_thinking,
++                _served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
++                _retry_model = settings.argon_fallback_model if _served else model
++                _retry_is_argon = is_argon and not _served
++
++                async def _regenerate_for_tools(nudge: str = "") -> str:
++                    r = await argon_fallback.generate(gemini_client, prompt + nudge, _retry_model, attachments,
++                                                      is_argon=_retry_is_argon, thinking=force_thinking,
+                                                       gem_id=gem_id, account_id=gem_account_id)
+                     _retried["text"] = r.get("text", "")
+                     return _retried["text"]
+ 
++                # Agent-loop guard (NDJSON stream: reuse the blank-line keepalive rhythm).
++                guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
++                    response_text, _regenerate_for_tools,
++                    enabled=getattr(settings, "tool_loop_stall_guard", True)))
++                try:
++                    async for _ping in sse_keepalive_during(guard_task):
++                        yield "\n"
++                except BaseException:          # GeneratorExit / CancelledError on client disconnect
++                    guard_task.cancel()
++                    if guard_task.done() and not guard_task.cancelled():
++                        guard_task.exception()
++                    raise
++                response_text, _stall_corrected = guard_task.result()
++                _retried["corrected"] = response_text
++
+                 # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——这条 NDJSON 流早就开了
+                 # （上面的空行保活已经发过），裸 await 会制造一次远超单个 keepalive 间隔的
+                 # 死寂（issue #10 followup F2）。同上面 gen_task 一样用 task + keepalive 续心跳；
+@@ -397,7 +439,7 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
+                     raise
+                 parsed = parse_task.result()
+                 if isinstance(parsed, dict):
+-                    response_text = parsed.get("content", _retried.get("text") or response_text)
++                    response_text = parsed.get("content", _retried.get("text") or _retried.get("corrected") or response_text)
+             async for chunk in split_into_chunks(response_text):
+                 yield _chunk(chunk)
+         else:
+@@ -411,6 +453,15 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
+                         # NDJSON blank-line keepalive (SSE ": ping" comment is invalid on this application/json stream)
+                         yield "\n"
+                         continue
++                    if evt.get("type") == "serve_marker":
++                        # NDJSON has no comment syntax: announce the substitution as its own line. Clients
++                        # that only read candidates ignore it; operators and logs do not have to guess.
++                        logger.warning(f"Argon -> {evt.get('served_by')} ({evt.get('reason')}): "
++                                       f"stream served by the fallback model")
++                        yield json.dumps({"gemini2api": {
++                            "argon_fallback": {"served_by": evt.get("served_by"), "reason": evt.get("reason")},
++                        }}) + "\n"
++                        continue
+                     if evt.get("type") == "delta":
+                         # generate_stream 现在是严格 append-only（不再发 _replace），delta 总是新增尾部
+                         delta = evt.get("text", "")
+@@ -458,4 +509,5 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
+         }
+         yield json.dumps(final_chunk) + "\n"
+ 
+-    return StreamingResponse(stream_generator(), media_type="application/json")
++    return StreamingResponse(stream_generator(), media_type="application/json",
++                             headers={**argon_fallback.stream_headers(is_argon), **_pre_headers})
+diff --git a/app/routers/openai.py b/app/routers/openai.py
+index 5b8b1d2..26a041f 100644
+--- a/app/routers/openai.py
++++ b/app/routers/openai.py
+@@ -12,7 +12,7 @@ from app.config import settings
+ from app.core.account_pool import account_pool as gemini_client
+ from app.core.api_forwarder import forward_to_provider, open_stream
+ from app.core.fallback import fallback_enabled, is_empty_result, get_fallback_entries, openai_data_is_empty
+-from app.core import argon_breaker
++from app.core import argon_breaker, argon_fallback, agent_loop
+ from app.core.conversation_store import conversation_store
+ from app.core.gemini_client import (
+     GEMINI_MODELS, MODEL_ALIASES, _resolve_model, HTTPStatusError, UPSTREAM_ERRORS, classify_error,
+@@ -26,7 +26,7 @@ from app.models.openai import (
+     ImageGenerationRequest, ImageData, ImageResponse,
+ )
+ from app.utils.tools import build_tool_prompt, parse_tool_response_with_retry, estimate_tokens, is_image_generation_intent, maybe_image_generation_intent
+-from app.utils.prompt import build_prompt_from_messages, extract_attachments, last_user_text
++from app.utils.prompt import apply_argon_system, build_prompt_from_messages, extract_attachments, last_user_text
+ from app.core.limiter import limiter, dynamic_rate_limit, rate_limit_exempt
+ 
+ logger = logging.getLogger(__name__)
+@@ -286,19 +286,23 @@ async def chat_completions(req: ChatRequest, request: Request):
+         if conv and conv.gemini_conv_id:
+             gemini_conv_id = conv.gemini_conv_id
+ 
+-    # ARGON_SYSTEM_PROMPT: prepend to a *new* Argon conversation when the caller sent no system message.
+-    # Must happen before the prompt is flattened and before build_tool_prompt wraps it, otherwise the tool
+-    # prompt is lost. A continuing conversation (gemini_conv_id) sends only the last user message: the
+-    # upstream chat already holds the system prompt from its first turn.
+-    _argon_sys = (getattr(settings, "argon_system_prompt", "") or "").strip()
+-    if (_argon_sys and not gemini_conv_id
+-            and ("argon" in req.model.lower() or "argon" in resolved_model.lower())
+-            and not any(m.get("role") in ("system", "developer") for m in messages_raw)):
+-        messages_raw = [{"role": "system", "content": _argon_sys}] + messages_raw
+-
+-    # 如果有有效的 gemini_conv_id，只发最新一条用户消息（服务端会话继续）
+-    # 当客户端未传 conversation_id 时（如 OpenAI SDK / Codex / 编程 Agent），gemini_conv_id 为空，保留完整多轮上下文
+-    if gemini_conv_id and messages_raw:
++    # ARGON_SYSTEM_PROMPT: injected on a *new* Argon conversation. Coding harnesses always send their own
++    # developer prompt, so the default mode *merges* the Argon rules in front of it instead of skipping them
++    # (see ARGON_SYSTEM_PROMPT_MODE). Must happen before the prompt is flattened and before build_tool_prompt
++    # wraps it, otherwise the tool prompt is lost. A continuing conversation (gemini_conv_id) sends only the
++    # last user message: the upstream chat already holds the system prompt from its first turn.
++    _sys_text = None
++    if not gemini_conv_id and argon_fallback.is_argon_model(req.model):
++        messages_raw, _sys_text = apply_argon_system(
++            messages_raw, getattr(settings, "argon_system_prompt", ""),
++            getattr(settings, "argon_system_prompt_mode", "merge"))
++
++    # If the server were able to continue the stored conversation, only the newest user message would need to
++    # be sent. It is not: the 81-element StreamGenerate payload has no slot for a conversation id (spec §4.3),
++    # so stripping the prompt used to lose the entire context silently — the client's `conversation_id` was
++    # "accepted" and the model answered without history. Default is therefore the full history
++    # (SERVER_SIDE_CONTINUATION=false); set it true only once the payload can carry the id again.
++    if gemini_conv_id and messages_raw and getattr(settings, "server_side_continuation", False):
+         last_user_msg = ""
+         for msg in reversed(messages_raw):
+             if msg.get("role") == "user":
+@@ -308,10 +312,10 @@ async def chat_completions(req: ChatRequest, request: Request):
+                                         for b in content if isinstance(b, dict))
+                 last_user_msg = content
+                 break
+-        prompt = last_user_msg if last_user_msg else build_prompt_from_messages(messages_raw)
++        prompt = last_user_msg if last_user_msg else build_prompt_from_messages(messages_raw, system=_sys_text)
+     else:
+         gemini_conv_id = ""
+-        prompt = build_prompt_from_messages(messages_raw)
++        prompt = build_prompt_from_messages(messages_raw, system=_sys_text)
+ 
+     has_tools = bool(req.tools)
+     # 生图意图优先：即使带 tools（agent 每请求都带），只要是明确生图意图就跳过工具模拟，
+@@ -336,37 +340,34 @@ async def chat_completions(req: ChatRequest, request: Request):
+     else:
+         extended_thinking = (bool(_eff) or is_thinking_model) and settings.extended_thinking_enabled
+ 
+-    is_argon = ("argon" in req.model.lower() or "argon" in resolved_model.lower())
+-    if is_argon and (getattr(settings, "argon_always_fallback", False) or argon_breaker.is_open()):
+-        logger.info(f"Argon requested ('{req.model}'), but argon_always_fallback or the stall breaker is active. Serving {settings.argon_fallback_model}.")
+-        resolved_model = settings.argon_fallback_model
++    # Argon plan: a substitution demanded up front (ARGON_ALWAYS_FALLBACK / open stall breaker) is reported
++    # by name in the response headers instead of being silent.
++    resolved_model, is_argon, force_thinking, argon_served_by = argon_fallback.plan(req.model, resolved_model)
++    if force_thinking:
+         extended_thinking = True
+-        is_argon = False
++    _pre_headers = argon_fallback.plan_headers(argon_served_by)
+ 
+     if req.stream:
+         return StreamingResponse(
+-            _stream_response(prompt, resolved_model, has_tools, gemini_conv_id, conv, messages_raw, req.model, attachments, _image_base(request), request, req, gem_id, gem_account_id, extended_thinking=extended_thinking, is_argon=is_argon),
++            _stream_response(prompt, resolved_model, has_tools, gemini_conv_id, conv, messages_raw, req.model, attachments, _image_base(request), request, req, gem_id, gem_account_id, extended_thinking=extended_thinking, is_argon=is_argon, system_text=_sys_text),
+             media_type="text/event-stream",
+-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
++            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
++                     **argon_fallback.stream_headers(is_argon), **_pre_headers},
+         )
+ 
+     try:
+-        result = await gemini_client.generate(prompt, resolved_model, gemini_conv_id, attachments,
+-                                              gem_id=gem_id, account_id=gem_account_id,
+-                                              extended_thinking=extended_thinking)
++        # The Argon -> Flash rules live in exactly one place (app/core/argon_fallback.py): error, timeout,
++        # empty reply and Google-web-error replies all degrade to the fallback model, and the substitution is
++        # reported back through result["argon_fallback"] -> response headers.
++        result = await argon_fallback.generate(
++            gemini_client, prompt, resolved_model, attachments,
++            is_argon=is_argon, thinking=extended_thinking, conversation_id=gemini_conv_id,
++            gem_id=gem_id, account_id=gem_account_id)
+     except UPSTREAM_ERRORS as e:
+         err = e
+         result = None
+-        if is_argon and getattr(settings, "argon_fallback_to_flash", True):
+-            logger.warning(f"Argon chat/completions failed ({e}), falling back to {settings.argon_fallback_model}")
+-            try:
+-                result = await gemini_client.generate(prompt, settings.argon_fallback_model, gemini_conv_id, attachments,
+-                                                      gem_id=gem_id, account_id=gem_account_id,
+-                                                      extended_thinking=True)
+-            except UPSTREAM_ERRORS as e_fb:
+-                err = e_fb
+         # 扩展思维链路径失败：先原样退回非思维链重试一次，再走既有兜底（会话过期/第三方）
+-        elif extended_thinking:
++        if extended_thinking:
+             logger.warning(f"extended-thinking request failed, retrying normal: {e}")
+             try:
+                 result = await gemini_client.generate(prompt, resolved_model, gemini_conv_id, attachments,
+@@ -378,7 +379,7 @@ async def chat_completions(req: ChatRequest, request: Request):
+         if result is None:
+             # Fallback: 如果 conversation_id 过期，用完整 prompt 重试
+             if gemini_conv_id:
+-                prompt = build_prompt_from_messages(messages_raw)
++                prompt = build_prompt_from_messages(messages_raw, system=_sys_text)
+                 if has_tools:
+                     tools_raw = [t.model_dump() for t in req.tools]
+                     prompt = build_tool_prompt(prompt, tools_raw, req.tool_choice)
+@@ -410,20 +411,9 @@ async def chat_completions(req: ChatRequest, request: Request):
+                     headers=headers,
+                 )
+ 
+-    # Gemini 返回空响应（无文本、无图）或 Google web 错误 → 若为 Argon 则先尝试兜底至 Flash 3.8 High，再走第三方兜底
++    # Gemini 返回空响应（无文本、无图）或 Google web 错误 → 第三方兜底（Argon 的 Flash 兜底已在上面做过）
+     res_text = (result.get("text") or "").strip() if result else ""
+     is_err_text = bool(res_text and any(res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
+-    if is_argon and getattr(settings, "argon_fallback_to_flash", True) and (is_empty_result(result) or is_err_text):
+-        logger.warning(f"Argon returned empty or web error ({res_text[:60]}), falling back to {settings.argon_fallback_model}")
+-        try:
+-            result = await gemini_client.generate(prompt, settings.argon_fallback_model, gemini_conv_id, attachments,
+-                                                  gem_id=gem_id, account_id=gem_account_id,
+-                                                  extended_thinking=True)
+-            res_text = (result.get("text") or "").strip() if result else ""
+-            is_err_text = False
+-        except Exception as e_fb:
+-            logger.error(f"Fallback to {settings.argon_fallback_model} also failed: {e_fb}")
+-
+     if is_empty_result(result) or is_err_text:
+         fb = await _fallback_result(request, req, messages_raw, resolved_model)
+         if fb is not None:
+@@ -460,12 +450,16 @@ async def chat_completions(req: ChatRequest, request: Request):
+         await conversation_store.update(conv)
+ 
+     if has_tools:
+-        async def _regenerate_for_tools() -> str:
+-            r = await gemini_client.generate(prompt, resolved_model, gemini_conv_id, attachments,
++        async def _regenerate_for_tools(nudge: str = "") -> str:
++            r = await gemini_client.generate(prompt + nudge, resolved_model, gemini_conv_id, attachments,
+                                              gem_id=gem_id, account_id=gem_account_id,
+                                              extended_thinking=extended_thinking)
+             return r.get("text", "")
+ 
++        # Agent-loop guard: a reply that only promises to inspect/edit files ends the harness' turn, so the
++        # model is asked once more with the correction appended (app/core/agent_loop.py).
++        text, _stall_corrected = await agent_loop.guard_tool_loop(
++            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True))
+         parsed = await parse_tool_response_with_retry(text, _regenerate_for_tools)
+         if parsed["type"] == "tool_calls":
+             tool_calls = []
+@@ -479,7 +473,8 @@ async def chat_completions(req: ChatRequest, request: Request):
+                         "arguments": json.dumps(tc.get("arguments", {})),
+                     },
+                 })
+-            return ChatResponse(
++            _hdr = {**_pre_headers, **argon_fallback.result_headers(result)}
++            _resp = ChatResponse(
+                 id=completion_id,
+                 model=req.model,
+                 choices=[Choice(
+@@ -493,9 +488,12 @@ async def chat_completions(req: ChatRequest, request: Request):
+                 ),
+                 conversation_id=conv.id if conv else None,
+             )
++            if _hdr:
++                return JSONResponse(content=_resp.model_dump(), headers=_hdr)
++            return _resp
+         text = parsed.get("content", text)
+ 
+-    return ChatResponse(
++    _resp = ChatResponse(
+         id=completion_id,
+         model=req.model,
+         choices=[Choice(
+@@ -510,9 +508,13 @@ async def chat_completions(req: ChatRequest, request: Request):
+         ),
+         conversation_id=conv.id if conv else None,
+     )
++    _hdr = {**_pre_headers, **argon_fallback.result_headers(result)}
++    if _hdr:
++        return JSONResponse(content=_resp.model_dump(), headers=_hdr)
++    return _resp
+ 
+ 
+-async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv_id: str = "", conv=None, messages_raw=None, display_model: str = "", attachments=None, base_url: str = "", request=None, req=None, gem_id=None, account_id=None, extended_thinking: bool = False, is_argon: bool = False) -> AsyncGenerator[str, None]:
++async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv_id: str = "", conv=None, messages_raw=None, display_model: str = "", attachments=None, base_url: str = "", request=None, req=None, gem_id=None, account_id=None, extended_thinking: bool = False, is_argon: bool = False, system_text: str | None = None) -> AsyncGenerator[str, None]:
+     completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+     model_name = display_model or model
+ 
+@@ -523,7 +525,7 @@ async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv
+         async for sse in _stream_response_buffered(
+             prompt, model, has_tools, gemini_conv_id, conv, messages_raw,
+             model_name, completion_id, attachments, base_url, request, req, gem_id, account_id,
+-            extended_thinking=extended_thinking, is_argon=is_argon,
++            extended_thinking=extended_thinking, is_argon=is_argon, system_text=system_text,
+         ):
+             yield sse
+         return
+@@ -541,13 +543,23 @@ async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv
+     streamed_any = False
+     emitted_thoughts = ""  # 已发出的思维链前缀，用于跟已知累积 thoughts 做前缀 diff 只发增量
+     try:
++        # One implementation of the Argon -> Flash rules for every protocol (app/core/argon_fallback.py):
++        # the helper re-raises as soon as content has gone out, retries Argon once on a dead-but-silent
++        # stream, and emits a `serve_marker` event when it hands the request to Flash -- so a substitution
++        # is never invisible in the stream.
+         async for _kind, evt in iter_with_keepalive(
+-            gemini_client.generate_stream(prompt, model, gemini_conv_id, attachments,
+-                                          gem_id=gem_id, account_id=account_id,
+-                                          extended_thinking=extended_thinking)):
++            argon_fallback.generate_stream(gemini_client, prompt, model, attachments,
++                                           is_argon=is_argon, thinking=extended_thinking,
++                                           conversation_id=gemini_conv_id,
++                                           gem_id=gem_id, account_id=account_id)):
+             if _kind == "ping":
+                 yield SSE_KEEPALIVE_FRAME
+                 continue
++            if evt.get("type") == "serve_marker":
++                logger.warning(f"Argon -> {evt.get('served_by')} ({evt.get('reason')}): "
++                               f"stream served by the fallback model")
++                yield argon_fallback.marker_frame(evt)
++                continue
+             if evt.get("type") == "delta":
+                 # generate_stream 现在是严格 append-only（不再发 _replace），delta 总是新增尾部
+                 delta = evt.get("text", "")
+@@ -599,50 +611,13 @@ async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv
+                     full_text = final_text
+                 new_conv_id = evt.get("conversation_id", "")
+                 final_images = evt.get("images") or []
+-        # An Argon stream that ends with no answer at all (empty reply, sign-in page, malformed or truncated
+-        # frames) raises nothing, so it used to skip the Flash fallback and finish as an empty completion.
+-        if (is_argon and getattr(settings, "argon_fallback_to_flash", True)
+-                and not streamed_any and not (full_text or "").strip() and not final_images):
+-            raise RuntimeError("Argon stream ended without any answer")
+     except Exception as e:
+-        if is_argon and getattr(settings, "argon_fallback_to_flash", True) and not streamed_any:
+-            logger.warning(f"Argon stream failed before first chunk ({e}), falling back to {settings.argon_fallback_model}")
+-            try:
+-                async for _kind, evt in iter_with_keepalive(
+-                    gemini_client.generate_stream(prompt, settings.argon_fallback_model, gemini_conv_id, attachments,
+-                                                  gem_id=gem_id, account_id=account_id,
+-                                                  extended_thinking=True)):
+-                    if _kind == "ping":
+-                        yield SSE_KEEPALIVE_FRAME
+-                        continue
+-                    if evt.get("type") == "delta":
+-                        delta = evt.get("text", "")
+-                        full_text += delta
+-                        if delta:
+-                            streamed_any = True
+-                            chunk = StreamChunk(
+-                                id=completion_id, model=model_name,
+-                                choices=[StreamChoice(delta=StreamDelta(content=delta))],
+-                            )
+-                            yield format_sse(chunk.model_dump())
+-                    elif evt.get("type") == "thoughts":
+-                        delta = evt.get("text", "")
+-                        if delta:
+-                            chunk = StreamChunk(
+-                                id=completion_id, model=model_name,
+-                                choices=[StreamChoice(delta=StreamDelta(reasoning_content=delta))],
+-                            )
+-                            yield format_sse(chunk.model_dump())
+-                    elif evt.get("type") == "final":
+-                        final_images = evt.get("images") or []
+-                        new_conv_id = evt.get("conversation_id", "")
+-            except Exception as e_fb:
+-                yield _err_chunk(e_fb)
+-                return
++        # Reached only when the Argon->Flash helper also gave up (or Argon content had already streamed):
++        # the fallback itself is fully handled inside app/core/argon_fallback.py.
+         # 流式失败：会话ID 过期等场景，用完整 prompt 非流式重试一次
+-        elif gemini_conv_id and messages_raw and not streamed_any:
++        if gemini_conv_id and messages_raw and not streamed_any:
+             try:
+-                retry_prompt = build_prompt_from_messages(messages_raw)
++                retry_prompt = build_prompt_from_messages(messages_raw, system=system_text)
+                 result = await gemini_client.generate(retry_prompt, model, "", attachments,
+                                                       gem_id=gem_id, account_id=account_id,
+                                                       extended_thinking=False)
+@@ -726,8 +701,13 @@ def _err_chunk(exc: Exception) -> str:
+     return format_sse(chunk) + "data: [DONE]\n\n"
+ 
+ 
+-async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, gemini_conv_id: str = "", conv=None, messages_raw=None, model_name: str = "", completion_id: str = "", attachments=None, base_url: str = "", request=None, req=None, gem_id=None, account_id=None, extended_thinking: bool = False, is_argon: bool = False) -> AsyncGenerator[str, None]:
+-    """非流式收集 + 切片伪流式：用于有工具调用/附件、需要完整文本的场景。"""
++async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, gemini_conv_id: str = "", conv=None, messages_raw=None, model_name: str = "", completion_id: str = "", attachments=None, base_url: str = "", request=None, req=None, gem_id=None, account_id=None, extended_thinking: bool = False, is_argon: bool = False, system_text: str | None = None) -> AsyncGenerator[str, None]:
++    """非流式收集 + 切片伪流式：用于有工具调用/附件、需要完整文本的场景。
++
++    整条生成走 ``argon_fallback.generate``：Argon 的失败/超时/空回复 → Flash 兜底、失败兜底会重新抛出、
++    替换发生时结果里带上 ``argon_fallback`` 标记（``_result_headers`` 会把它如实写回响应头）。此前这里
++    是第三份手写的兜底副本，三处规则不同步、兜底失败还会静默返回空响应。
++    """
+     # 立即发出首帧 SSE，避免生图/工具路径在 generate() 阻塞期间零字节导致前置代理超时。
+     first = StreamChunk(
+         id=completion_id, model=model_name,
+@@ -735,63 +715,38 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
+     )
+     yield format_sse(first.model_dump())
+ 
+-    async def _safe_generate(p: str, m: str, c_id: str):
+-        if extended_thinking:
+-            try:
+-                return await gemini_client.generate(p, m, c_id, attachments,
+-                                                    gem_id=gem_id, account_id=account_id,
+-                                                    extended_thinking=True)
+-            except TypeError:
+-                pass
+-        return await gemini_client.generate(p, m, c_id, attachments,
+-                                            gem_id=gem_id, account_id=account_id)
+-
+-    gen_task = asyncio.create_task(_safe_generate(prompt, model, gemini_conv_id))
+-    try:
+-        async for ping in _sse_keepalive_during(gen_task):
+-            yield ping
+-    except BaseException:          # GeneratorExit / CancelledError on client disconnect
+-        gen_task.cancel()
+-        if gen_task.done() and not gen_task.cancelled():
+-            gen_task.exception()   # 取回异常，避免 asyncio 在 GC 时打印 "Task exception was never retrieved"
+-        raise
++    async def _argon_generate(p: str, m: str, c_id: str, *, argon: bool | None = None):
++        return await argon_fallback.generate(
++            gemini_client, p, m, attachments,
++            is_argon=is_argon if argon is None else argon, thinking=extended_thinking,
++            conversation_id=c_id, gem_id=gem_id, account_id=account_id)
++
++    async def _keepalive_task(task: asyncio.Task):
++        """yield keepalive frames while ``task`` runs; on disconnect cancel it and re-raise."""
++        try:
++            async for ping in _sse_keepalive_during(task):
++                yield ping
++        except BaseException:          # GeneratorExit / CancelledError on client disconnect
++            task.cancel()
++            if task.done() and not task.cancelled():
++                task.exception()       # 取回异常，避免 asyncio 在 GC 时打印 "Task exception was never retrieved"
++            raise
++        if task.done() and not task.cancelled():
++            task.exception()           # 同上：异常由调用方的 task.result() 统一映射
++
++    gen_task = asyncio.create_task(_argon_generate(prompt, model, gemini_conv_id))
++    async for ping in _keepalive_task(gen_task):
++        yield ping
+ 
+     try:
+         result = gen_task.result()
+     except Exception as e:
+-        if is_argon and getattr(settings, "argon_fallback_to_flash", True):
+-            logger.warning(f"Argon stream(buffered) failed ({e}), falling back to {settings.argon_fallback_model}")
+-            retry_task = asyncio.create_task(_safe_generate(prompt, settings.argon_fallback_model, gemini_conv_id))
+-            try:
+-                async for ping in _sse_keepalive_during(retry_task):
+-                    yield ping
+-            except BaseException:
+-                retry_task.cancel()
+-                if retry_task.done() and not retry_task.cancelled():
+-                    retry_task.exception()
+-                raise
+-            try:
+-                result = retry_task.result()
+-            except Exception as e2:
+-                emitted = False
+-                async for chunk in _maybe_fallback_stream(request, req, messages_raw, model, completion_id, model_name):
+-                    emitted = True
+-                    yield chunk
+-                if emitted:
+-                    return
+-                yield _err_chunk(e2)
+-                return
+-        elif gemini_conv_id and messages_raw:
+-            full_prompt = build_prompt_from_messages(messages_raw)
+-            retry_task = asyncio.create_task(_safe_generate(full_prompt, model, ""))
+-            try:
+-                async for ping in _sse_keepalive_during(retry_task):
+-                    yield ping
+-            except BaseException:          # GeneratorExit / CancelledError on client disconnect
+-                retry_task.cancel()
+-                if retry_task.done() and not retry_task.cancelled():
+-                    retry_task.exception()   # 取回异常，避免 asyncio 在 GC 时打印 "Task exception was never retrieved"
+-                raise
++        # 兜底也已失败（或 Argon 已有内容流出后失败）：会话过期场景整段重发一次
++        if gemini_conv_id and messages_raw:
++            full_prompt = build_prompt_from_messages(messages_raw, system=system_text)
++            retry_task = asyncio.create_task(_argon_generate(full_prompt, model, ""))
++            async for ping in _keepalive_task(retry_task):
++                yield ping
+             try:
+                 result = retry_task.result()
+             except Exception as e2:
+@@ -813,27 +768,9 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
+             yield _err_chunk(e)
+             return
+ 
+-    # Gemini 返回空响应（无文本、无图）或 Google web 错误 → 第三方兜底（此前只发过 role 首帧 + keepalive，可安全改流）
++    # 上游返回空响应或 Google web 错误：Flash 兜底已在 _argon_generate 里做过，这里只剩第三方兜底。
+     raw_res_text = (result.get("text") or "").strip() if result else ""
+     is_err_text = bool(raw_res_text and any(raw_res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
+-    if is_argon and getattr(settings, "argon_fallback_to_flash", True) and (is_empty_result(result) or is_err_text):
+-        logger.warning(f"Argon stream(buffered) returned empty/error text, falling back to {settings.argon_fallback_model}")
+-        fb_task = asyncio.create_task(_safe_generate(prompt, settings.argon_fallback_model, gemini_conv_id))
+-        try:
+-            async for ping in _sse_keepalive_during(fb_task):
+-                yield ping
+-        except BaseException:
+-            fb_task.cancel()
+-            if fb_task.done() and not fb_task.cancelled():
+-                fb_task.exception()
+-            raise
+-        try:
+-            result = fb_task.result()
+-            raw_res_text = (result.get("text") or "").strip() if result else ""
+-            is_err_text = False
+-        except Exception as e_fb:
+-            logger.error(f"Fallback to {settings.argon_fallback_model} also failed: {e_fb}")
+-
+     if is_empty_result(result) or is_err_text:
+         emitted = False
+         async for chunk in _maybe_fallback_stream(request, req, messages_raw, model, completion_id, model_name):
+@@ -858,24 +795,30 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
+         await conversation_store.update(conv)
+ 
+     if has_tools:
++        # 工具重试沿用「这次到底是谁答的」：已经被 Flash 兜底过的请求不要再去吃一遍 Argon 超时。
++        served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
++        retry_model = settings.argon_fallback_model if served else model
++        retry_is_argon = is_argon and not served
++
+         # 此刻只发过 role 首帧 + keepalive，还没发任何 content 块，重试是安全的。
+-        async def _regenerate_for_tools() -> str:
+-            model_to_use = settings.argon_fallback_model if is_argon else model
+-            r = await _safe_generate(prompt, model_to_use, gemini_conv_id)
++        async def _regenerate_for_tools(nudge: str = "") -> str:
++            r = await _argon_generate(prompt + nudge, retry_model, gemini_conv_id, argon=retry_is_argon)
+             return r.get("text", "")
+ 
++        # Agent-loop guard: a promise-only reply ("I'll inspect the files...") would end the harness'
++        # turn, so it is corrected once before the tool call is parsed.
++        guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
++            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True)))
++        async for ping in _keepalive_task(guard_task):
++            yield ping
++        text, _stall_corrected = guard_task.result()
++
+         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——这条流早就开了（role 首帧已发），
+         # 裸 await 会在这段已开的连接上制造一次远超单个 keepalive 间隔的死寂（issue #10
+         # followup F2）。用与上面 gen_task 相同的 task + keepalive 套路续上心跳。
+         parse_task = asyncio.create_task(parse_tool_response_with_retry(text, _regenerate_for_tools))
+-        try:
+-            async for ping in _sse_keepalive_during(parse_task):
+-                yield ping
+-        except BaseException:          # GeneratorExit / CancelledError on client disconnect
+-            parse_task.cancel()
+-            if parse_task.done() and not parse_task.cancelled():
+-                parse_task.exception()   # 取回异常，避免 asyncio 在 GC 时打印 "Task exception was never retrieved"
+-            raise
++        async for ping in _keepalive_task(parse_task):
++            yield ping
+         parsed = parse_task.result()
+         if parsed["type"] == "tool_calls":
+             for i, tc in enumerate(parsed["tool_calls"]):
+@@ -917,7 +860,6 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
+     yield "data: [DONE]\n\n"
+ 
+ 
+-
+ @router.post("/images/generations")
+ async def images_generations(req: ImageGenerationRequest):
+     """OpenAI 兼容的图片生成接口。靠 prompt 触发 Gemini Web 生图，
+diff --git a/app/routers/responses.py b/app/routers/responses.py
+index f9a819e..785cf55 100644
+--- a/app/routers/responses.py
++++ b/app/routers/responses.py
+@@ -12,7 +12,7 @@ from app.config import settings
+ from app.core.account_pool import account_pool as gemini_client
+ from app.core.gemini_client import GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES
+ from app.core.fallback import is_empty_result
+-from app.core import argon_breaker
++from app.core import agent_loop, argon_fallback
+ from app.core.responses_protocol import (
+     parse_responses_input, build_responses_object, new_response_id, ResponsesStreamEncoder,
+ )
+@@ -124,12 +124,10 @@ async def create_response(request: Request):
+             gem_account_id = gem_info.get("account_id") or None
+             resolved_model = gem_info.get("base_model") or "gemini-pro"
+ 
+-    is_argon = ("argon" in model.lower() or "argon" in resolved_model.lower())
+-    if is_argon and (getattr(settings, "argon_always_fallback", False) or argon_breaker.is_open()):
+-        logger.info(f"Argon requested ('{model}'), but argon_always_fallback or the stall breaker is active. Serving {settings.argon_fallback_model}.")
+-        resolved_model = settings.argon_fallback_model
++    resolved_model, is_argon, force_thinking, argon_served_by = argon_fallback.plan(model, resolved_model)
++    if force_thinking:
+         extended_thinking = True
+-        is_argon = False
++    _pre_headers = argon_fallback.plan_headers(argon_served_by)
+ 
+     request_params = _request_params(body)
+ 
+@@ -159,20 +157,12 @@ async def create_response(request: Request):
+         )
+ 
+     try:
+-        result = await gemini_client.generate(prompt, resolved_model, "", attachments,
+-                                              gem_id=gem_id, account_id=gem_account_id,
+-                                              extended_thinking=extended_thinking)
++        # Argon -> Flash rules live in app/core/argon_fallback.py (one implementation, marked substitutions).
++        result = await argon_fallback.generate(
++            gemini_client, prompt, resolved_model, attachments,
++            is_argon=is_argon, thinking=extended_thinking, gem_id=gem_id, account_id=gem_account_id)
+     except Exception as e:
+-        if is_argon and getattr(settings, "argon_fallback_to_flash", True):
+-            logger.warning(f"Argon request failed ({e}), falling back to {settings.argon_fallback_model}")
+-            try:
+-                result = await gemini_client.generate(prompt, settings.argon_fallback_model, "", attachments,
+-                                                      gem_id=gem_id, account_id=gem_account_id,
+-                                                      extended_thinking=True)
+-            except Exception as e_fb:
+-                logger.error(f"Fallback to {settings.argon_fallback_model} also failed: {e_fb}")
+-                return _error(502, str(e), error_type="api_error")
+-        elif extended_thinking:
++        if extended_thinking:
+             logger.warning(f"extended-thinking request failed, retrying normal: {e}")
+             try:
+                 result = await gemini_client.generate(prompt, resolved_model, "", attachments,
+@@ -186,26 +176,25 @@ async def create_response(request: Request):
+     text = result.get("text", "")
+     res_text = (text or "").strip()
+     is_err_text = bool(res_text and any(res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
+-    if is_argon and getattr(settings, "argon_fallback_to_flash", True) and (is_empty_result(result) or is_err_text):
+-        logger.warning(f"Argon returned empty or web error ({res_text[:60]}), falling back to {settings.argon_fallback_model}")
+-        try:
+-            result = await gemini_client.generate(prompt, settings.argon_fallback_model, "", attachments,
+-                                                  gem_id=gem_id, account_id=gem_account_id,
+-                                                  extended_thinking=True)
+-            text = result.get("text", "")
+-        except Exception as e_fb:
+-            logger.error(f"Fallback to {settings.argon_fallback_model} also failed: {e_fb}")
+     # AI 生成图片：沿用 chat/completions 的既有做法，Markdown 图片链接嵌入文字内容（design §4.3）
+     gen_images = result.get("images") or []
+     if gen_images:
+         md = _images_to_markdown(gen_images, request)
+         text = (md + "\n" + text.strip()) if text.strip() else md
+-    async def _regenerate_for_tools() -> str:
+-        r = await gemini_client.generate(prompt, resolved_model, "", attachments,
+-                                         gem_id=gem_id, account_id=gem_account_id,
+-                                         extended_thinking=extended_thinking)
++    _served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
++    _retry_model = settings.argon_fallback_model if _served else resolved_model
++    _retry_is_argon = is_argon and not _served
++
++    async def _regenerate_for_tools(nudge: str = "") -> str:
++        r = await argon_fallback.generate(gemini_client, prompt + nudge, _retry_model, attachments,
++                                          is_argon=_retry_is_argon, thinking=extended_thinking,
++                                          gem_id=gem_id, account_id=gem_account_id)
+         return r.get("text", "")
+ 
++    if has_tools:
++        # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
++        text, _stall_corrected = await agent_loop.guard_tool_loop(
++            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True))
+     output, _ = await _build_output_items(text, has_tools, _regenerate_for_tools)
+     thoughts = result.get("thoughts") or ""
+     if thoughts:
+@@ -276,38 +265,36 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
+         text = result.get("text", "")
+         res_text = (text or "").strip()
+         is_err_text = bool(res_text and any(res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
+-        if is_argon and getattr(settings, "argon_fallback_to_flash", True) and (is_empty_result(result) or is_err_text):
+-            logger.warning(f"Argon stream(buffered) returned empty/error text, falling back to {settings.argon_fallback_model}")
+-            fb_task = asyncio.create_task(gemini_client.generate(prompt, settings.argon_fallback_model, "", attachments,
+-                                                                 gem_id=gem_id, account_id=gem_account_id,
+-                                                                 extended_thinking=True))
+-            try:
+-                async for ping in sse_keepalive_during(fb_task):
+-                    yield ping
+-            except BaseException:
+-                fb_task.cancel()
+-                if fb_task.done() and not fb_task.cancelled():
+-                    fb_task.exception()
+-                raise
+-            try:
+-                result = fb_task.result()
+-                text = result.get("text", "")
+-            except Exception as e_fb:
+-                yield enc.failed(str(e_fb))
+-                return
+         thoughts = result.get("thoughts") or ""
+         gen_images = result.get("images") or []
+         if gen_images:
+             md = _images_to_markdown(gen_images, request)
+             text = (md + "\n" + text.strip()) if text.strip() else md
+         # 此处只发过 created/in_progress/keepalive，还没发任何 output 块，重试是安全的。
+-        async def _regenerate_for_tools() -> str:
+-            model_to_use = settings.argon_fallback_model if is_argon else model
+-            r = await gemini_client.generate(prompt, model_to_use, "", attachments,
+-                                             gem_id=gem_id, account_id=gem_account_id,
+-                                             extended_thinking=extended_thinking or is_argon)
++        _served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
++        _retry_model = settings.argon_fallback_model if _served else model
++        _retry_is_argon = is_argon and not _served
++
++        async def _regenerate_for_tools(nudge: str = "") -> str:
++            r = await argon_fallback.generate(gemini_client, prompt + nudge, _retry_model, attachments,
++                                              is_argon=_retry_is_argon, thinking=extended_thinking or is_argon,
++                                              gem_id=gem_id, account_id=gem_account_id)
+             return r.get("text", "")
+ 
++        if has_tools:
++            # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
++            guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
++                text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True)))
++            try:
++                async for ping in sse_keepalive_during(guard_task):
++                    yield ping
++            except BaseException:
++                guard_task.cancel()
++                if guard_task.done() and not guard_task.cancelled():
++                    guard_task.exception()
++                raise
++            text, _stall_corrected = guard_task.result()
++
+         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——这条流早就开了（created/
+         # in_progress/keepalive 已发），裸 await 会在已开的连接上制造一次远超单个 keepalive
+         # 间隔的死寂（issue #10 followup F2）。用与上面 gen_task 相同的 task + keepalive 续心跳。
+diff --git a/app/routers/settings.py b/app/routers/settings.py
+index 5574730..3267d6a 100644
+--- a/app/routers/settings.py
++++ b/app/routers/settings.py
+@@ -40,6 +40,7 @@ class SettingsResponse(BaseModel):
+     # 新增分组必须在此显式声明：pydantic 默认 extra="ignore"，且路由声明了
+     # response_model=SettingsResponse，未声明的分组会被静默丢弃（面板永远看不到该开关）。
+     logging: Dict[str, Any] = Field(default_factory=dict, description="Request/response body logging settings")
++    argon: Dict[str, Any] = Field(default_factory=dict, description="Argon model + agent-loop settings")
+ 
+ 
+ class SettingsUpdateRequest(BaseModel):
+@@ -91,6 +92,12 @@ def _get_grouped_settings() -> Dict[str, Dict[str, Any]]:
+         "logging": {
+             "log_bodies_enabled": settings.log_bodies_enabled,
+         },
++        "argon": {
++            "argon_system_prompt_mode": settings.argon_system_prompt_mode,
++            "argon_timeout": settings.argon_timeout,
++            "tool_loop_reminder": settings.tool_loop_reminder,
++            "tool_loop_stall_guard": settings.tool_loop_stall_guard,
++        },
+     }
+ 
+ 
+diff --git a/app/utils/prompt.py b/app/utils/prompt.py
+index e483fb4..0d0584d 100644
+--- a/app/utils/prompt.py
++++ b/app/utils/prompt.py
+@@ -17,6 +17,52 @@ _MIME_EXT = {
+ }
+ 
+ 
++def argon_system_text(caller_system: str, argon_sys: str, mode: str) -> str:
++    """Combine a caller's system text with ``ARGON_SYSTEM_PROMPT`` according to ``mode``."""
++    argon = (argon_sys or "").strip()
++    caller = (caller_system or "").strip()
++    if not argon:
++        return caller_system or ""
++    if not caller:
++        return argon
++    mode = (mode or "merge").strip().lower()
++    if mode == "only_when_none":
++        return caller
++    if mode == "replace":
++        return argon
++    return f"{argon}\n\n{caller}"
++
++
++def apply_argon_system(messages: list[dict], argon_sys: str, mode: str) -> tuple[list[dict], str | None]:
++    """Fold ``ARGON_SYSTEM_PROMPT`` into a message list.
++
++    Returns ``(messages, system_text)`` ready for :func:`build_prompt_from_messages`: the system/developer
++    messages are lifted out of ``messages`` and merged with ``ARGON_SYSTEM_PROMPT`` into ``system_text``
++    (``None`` means nothing to pass, i.e. no Argon prompt and no caller system message).
++
++    Coding harnesses (Codex, Cline, OpenCode) *always* send their own developer prompt, so the old
++    "inject only when the caller sent nothing" rule silently disabled the Argon rules for exactly the
++    clients they were written for. Modes:
++      * ``merge``          - Argon rules first, then the caller's text (default);
++      * ``only_when_none`` - legacy behaviour: keep the caller's text untouched when there is one;
++      * ``replace``        - use the Argon rules instead of the caller's text.
++    """
++    argon = (argon_sys or "").strip()
++    if not argon:
++        # No Argon prompt configured: leave the message list exactly as the caller sent it (zero regression).
++        return messages, None
++    caller_msgs = [m for m in messages
++                   if isinstance(m, dict) and m.get("role") in ("system", "developer")]
++    caller_text = "\n\n".join(
++        (m.get("content") if isinstance(m.get("content"), str) else "") or "" for m in caller_msgs
++    ).strip()
++    combined = argon_system_text(caller_text, argon, mode)
++    # The merged text carries everything the model must see; drop the now-duplicated caller messages so
++    # they are not flattened into the prompt twice.
++    rest = [m for m in messages if not (isinstance(m, dict) and m.get("role") in ("system", "developer"))]
++    return rest, (combined or None)
++
++
+ def _flatten_tool_result_content(content) -> str:
+     """tool_result 的 content 支持字符串或文本块数组两种形态，统一展平成纯文本。"""
+     if isinstance(content, str):
+diff --git a/app/utils/tools.py b/app/utils/tools.py
+index 51b29f0..2201619 100644
+--- a/app/utils/tools.py
++++ b/app/utils/tools.py
+@@ -144,6 +144,30 @@ def maybe_image_generation_intent(text: str) -> bool:
+     return has_noun and has_verb
+ 
+ 
++# Appended to the END of every tool-mode prompt. A prefix-only instruction is the first thing a chat model
++# forgets in a long turn; the community fix for the "agent stalls after 1-2 tool calls" problem (issues #97
++# and friends) is the same reminder restated right before the model answers. Kept in the model's own
++# instruction voice and deliberately blunt: "promise" phrasing is what makes a harness end the turn.
++TOOL_LOOP_REMINDER = (
++    "[MANDATORY — READ BEFORE ANSWERING]\n"
++    "You are inside a tool loop. If the task needs a command, a file read or a file write, ANSWER WITH THE "
++    "tool_call JSON AND NOTHING ELSE — do it in this message.\n"
++    "Never answer with a promise, a plan, a status update or a progress report ('I will inspect...', "
++    "'Let me check...', 'Working on it...', 'I'll let you know...'). Those end the turn and the work stops.\n"
++    "Text is only for the FINAL answer, after the work is done and verified, or for a question you truly "
++    "cannot answer with the tools you have."
++)
++
++
++def _tool_loop_reminder_enabled() -> bool:
++    """Read the setting lazily so tests/settings panels can toggle it at runtime."""
++    try:
++        from app.config import settings
++        return bool(getattr(settings, "tool_loop_reminder", True))
++    except Exception:  # config import must never break prompt building
++        return True
++
++
+ def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
+     if not tools:
+         return prompt
+@@ -196,7 +220,13 @@ def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
+         '{"status": "text", "content": "Hello, how can I help?"}'
+     )
+ 
+-    return f"{system_block}\n\nUser message: {prompt}"
++    tail = ""
++    # tool_choice="none" means the caller explicitly wants text only — a reminder to call a tool would
++    # contradict it.
++    if tool_choice != "none" and _tool_loop_reminder_enabled():
++        tail = f"\n\n{TOOL_LOOP_REMINDER}"
++
++    return f"{system_block}\n\nUser message: {prompt}{tail}"
+ 
+ 
+ def _strip_code_fence(text: str) -> str:
+diff --git a/static/app/i18n.js b/static/app/i18n.js
+index cb6cd2b..e06238b 100644
+--- a/static/app/i18n.js
++++ b/static/app/i18n.js
+@@ -156,6 +156,17 @@ const translations = {
+         'settings.group.logging': '日志诊断',
+         'settings.field.logBodiesEnabled': '记录完整请求/响应体',
+         'settings.hint.logBodies': '仅排障时临时开启：记录完整请求/响应内容（含用户提示词，不含请求头），只存内存不写磁盘',
++        'settings.group.argon': 'Argon 与 Agent 循环',
++        'settings.field.argonMode': 'ARGON_SYSTEM_PROMPT 合并方式',
++        'settings.field.argonTimeout': 'Argon 超时 (秒)',
++        'settings.field.toolLoopReminder': '末尾工具循环提醒',
++        'settings.field.toolLoopGuard': '中断对话的更正重试',
++        'settings.hint.argonMode': 'Codex/Cline 每次都发自己的 developer 提示词。merge = Argon 规则插在它前面（推荐）；only_when_none = 旧行为（有客户端提示词就跳过 Argon 规则）；replace = 用 Argon 规则替换客户端提示词',
++        'settings.hint.toolLoopReminder': '在工具提示词末尾追加“立即输出 tool_call、不要承诺”的强制提醒（社区已证实这是防止 agent 只调用 1–2 次工具就停下的关键）',
++        'settings.hint.toolLoopGuard': '模型只用文字承诺（“我这就去检查……”）而没有 tool_call 时，附加更正指令重试一次；重试仍失败则保留第一次回答',
++        'settings.mode.merge': '合并（推荐）',
++        'settings.mode.onlyWhenNone': '仅当客户端未提供时',
++        'settings.mode.replace': '替换客户端提示词',
+         'settings.saveMapping': '保存映射',
+         'settings.strategy.roundRobin': '轮询',
+         'settings.strategy.leastUsed': '最少使用',
+@@ -436,6 +447,17 @@ const translations = {
+         'settings.group.logging': 'Logging & Diagnostics',
+         'settings.field.logBodiesEnabled': 'Log Full Request/Response Bodies',
+         'settings.hint.logBodies': 'Turn on only while troubleshooting: records full request/response bodies (user prompts included, headers excluded), kept in memory only and never written to disk.',
++        'settings.group.argon': 'Argon & agent loop',
++        'settings.field.argonMode': 'ARGON_SYSTEM_PROMPT merge mode',
++        'settings.field.argonTimeout': 'Argon timeout (seconds)',
++        'settings.field.toolLoopReminder': 'End-of-prompt tool-loop reminder',
++        'settings.field.toolLoopGuard': 'Retry when the agent stalls',
++        'settings.hint.argonMode': 'Codex/Cline always send their own developer prompt. merge = put the Argon rules in front of it (default); only_when_none = legacy (skip the Argon rules when the client sent one); replace = use the Argon rules instead',
++        'settings.hint.toolLoopReminder': 'Appends "emit the tool_call now, no promises" to the END of the tool prompt (the community fix for agents that stop after 1-2 tool calls)',
++        'settings.hint.toolLoopGuard': 'When the model only promises ("I'll inspect the files...") without a tool_call, ask once more with the correction appended; the first reply is kept if the retry fails',
++        'settings.mode.merge': 'Merge (recommended)',
++        'settings.mode.onlyWhenNone': 'Only when the caller sent none',
++        'settings.mode.replace': 'Replace the caller's prompt',
+         'settings.saveMapping': 'Save Mapping',
+         'settings.strategy.roundRobin': 'Round Robin',
+         'settings.strategy.leastUsed': 'Least Used',
+@@ -715,6 +737,17 @@ const translations = {
+         'settings.group.logging': 'ログ診断',
+         'settings.field.logBodiesEnabled': 'リクエスト/レスポンス本文を記録',
+         'settings.hint.logBodies': '障害調査のときだけ一時的に有効化してください。リクエスト/レスポンス本文全体（ユーザーのプロンプトを含み、ヘッダーは除く）をメモリ上にのみ保持し、ディスクには書き込みません。',
++        'settings.group.argon': 'Argon とエージェントループ',
++        'settings.field.argonMode': 'ARGON_SYSTEM_PROMPT のマージ方法',
++        'settings.field.argonTimeout': 'Argon タイムアウト (秒)',
++        'settings.field.toolLoopReminder': 'プロンプト末尾のツールループ注意',
++        'settings.field.toolLoopGuard': '停滞時の訂正リトライ',
++        'settings.hint.argonMode': 'Codex/Cline は常に独自の developer プロンプトを送ります。merge = Argon ルールをその前に挿入（既定）；only_when_none = 旧動作（クライアントのプロンプトがあれば Argon ルールを省略）；replace = Argon ルールで置き換え',
++        'settings.hint.toolLoopReminder': 'ツールプロンプトの末尾に「今すぐ tool_call を出力し、約束は書かない」を追加（1〜2 回でツール呼び出しが止まる問題へのコミュニティ対策）',
++        'settings.hint.toolLoopGuard': 'tool_call なしで約束だけを返した場合、訂正を付けて 1 回だけ再生成；それでも失敗なら最初の回答を保持',
++        'settings.mode.merge': 'マージ（推奨）',
++        'settings.mode.onlyWhenNone': 'クライアント未指定時のみ',
++        'settings.mode.replace': 'クライアントのプロンプトを置換',
+         'settings.saveMapping': 'マッピング保存',
+         'settings.strategy.roundRobin': 'ラウンドロビン',
+         'settings.strategy.leastUsed': '最少使用',
+@@ -996,6 +1029,17 @@ const translations = {
+         'settings.group.logging': '로그 진단',
+         'settings.field.logBodiesEnabled': '요청/응답 본문 전체 기록',
+         'settings.hint.logBodies': '문제 해결 시에만 잠시 켜세요. 요청/응답 본문 전체(사용자 프롬프트 포함, 헤더 제외)를 메모리에만 보관하며 디스크에는 기록하지 않습니다.',
++        'settings.group.argon': 'Argon 및 에이전트 루프',
++        'settings.field.argonMode': 'ARGON_SYSTEM_PROMPT 병합 방식',
++        'settings.field.argonTimeout': 'Argon 타임아웃 (초)',
++        'settings.field.toolLoopReminder': '프롬프트 끝 도구 루프 알림',
++        'settings.field.toolLoopGuard': '멈춤 시 교정 재시도',
++        'settings.hint.argonMode': 'Codex/Cline 은 항상 자체 developer 프롬프트를 보냅니다. merge = Argon 규칙을 그 앞에 삽입(기본); only_when_none = 기존 동작(클라이언트 프롬프트가 있으면 Argon 규칙 생략); replace = Argon 규칙으로 대체',
++        'settings.hint.toolLoopReminder': '도구 프롬프트 끝에 "지금 tool_call 을 출력하고 약속하지 말라"를 추가(1~2회 도구 호출 후 멈추는 문제에 대한 커뮤니티 해결책)',
++        'settings.hint.toolLoopGuard': 'tool_call 없이 약속만 반환하면 교정 지시와 함께 한 번만 재생성; 그래도 실패하면 첫 응답 유지',
++        'settings.mode.merge': '병합(권장)',
++        'settings.mode.onlyWhenNone': '클라이언트가 없을 때만',
++        'settings.mode.replace': '클라이언트 프롬프트 대체',
+         'settings.saveMapping': '매핑 저장',
+         'settings.strategy.roundRobin': '라운드 로빈',
+         'settings.strategy.leastUsed': '최소 사용',
+@@ -1276,6 +1320,17 @@ const translations = {
+         'settings.group.logging': '日誌診斷',
+         'settings.field.logBodiesEnabled': '記錄完整請求/回應內容',
+         'settings.hint.logBodies': '僅疑難排解時暫時開啟：記錄完整請求/回應內容（含使用者提示詞，不含請求標頭），只存記憶體不寫入磁碟',
++        'settings.group.argon': 'Argon 與 Agent 迴圈',
++        'settings.field.argonMode': 'ARGON_SYSTEM_PROMPT 合併方式',
++        'settings.field.argonTimeout': 'Argon 逾時 (秒)',
++        'settings.field.toolLoopReminder': '結尾工具迴圈提醒',
++        'settings.field.toolLoopGuard': '停滯時的更正重試',
++        'settings.hint.argonMode': 'Codex/Cline 每次都送自己的 developer 提示詞。merge = Argon 規則插在它前面（建議）；only_when_none = 舊行為（有客戶端提示詞就略過 Argon 規則）；replace = 用 Argon 規則取代客戶端提示詞',
++        'settings.hint.toolLoopReminder': '在工具提示詞結尾追加「立即輸出 tool_call、不要承諾」的強制提醒（社群已證實這是避免 agent 只呼叫 1–2 次工具就停下的關鍵）',
++        'settings.hint.toolLoopGuard': '模型只用文字承諾（「我馬上去檢查……」）而沒有 tool_call 時，附加更正指令重試一次；重試仍失敗則保留第一次回答',
++        'settings.mode.merge': '合併（建議）',
++        'settings.mode.onlyWhenNone': '僅當客戶端未提供時',
++        'settings.mode.replace': '取代客戶端提示詞',
+         'settings.saveMapping': '儲存映射',
+         'settings.strategy.roundRobin': '輪詢',
+         'settings.strategy.leastUsed': '最少使用',
+diff --git a/static/app/settings.js b/static/app/settings.js
+index b67379b..fb4c651 100644
+--- a/static/app/settings.js
++++ b/static/app/settings.js
+@@ -20,7 +20,8 @@ function getGroupTitle(groupKey) {
+     account_management: 'settings.group.accounts',
+     usage_stats: 'settings.group.stats',
+     chat_cleanup: 'settings.group.chatCleanup',
+-    logging: 'settings.group.logging'
++    logging: 'settings.group.logging',
++    argon: 'settings.group.argon'
+   };
+   return t(map[groupKey] || groupKey);
+ }
+@@ -56,20 +57,36 @@ function getFieldLabel(key) {
+     chat_cleanup_keep_hours: 'settings.field.chatCleanupKeepHours',
+     chat_cleanup_interval_hours: 'settings.field.chatCleanupInterval',
+     chat_cleanup_skip_pinned: 'settings.field.chatCleanupSkipPinned',
+-    log_bodies_enabled: 'settings.field.logBodiesEnabled'
++    log_bodies_enabled: 'settings.field.logBodiesEnabled',
++    argon_system_prompt_mode: 'settings.field.argonMode',
++    argon_timeout: 'settings.field.argonTimeout',
++    tool_loop_reminder: 'settings.field.toolLoopReminder',
++    tool_loop_stall_guard: 'settings.field.toolLoopGuard'
+   };
+   return map[key] ? (map[key].startsWith('settings.') ? t(map[key]) : map[key]) : key;
+ }
+ 
+ // Optional field-level hint explanations.
+ const FIELD_HINTS = {
+-  log_bodies_enabled: 'settings.hint.logBodies'
++  log_bodies_enabled: 'settings.hint.logBodies',
++  argon_system_prompt_mode: 'settings.hint.argonMode',
++  tool_loop_reminder: 'settings.hint.toolLoopReminder',
++  tool_loop_stall_guard: 'settings.hint.toolLoopGuard'
+ };
+ 
+ function getFieldHint(key) {
+   return FIELD_HINTS[key] ? t(FIELD_HINTS[key]) : '';
+ }
+ 
++// Enum-valued fields render as a select (typing a raw enum value by hand is how settings get broken).
++const SELECT_OPTIONS = {
++  argon_system_prompt_mode: [
++    { value: 'merge', labelKey: 'settings.mode.merge' },
++    { value: 'only_when_none', labelKey: 'settings.mode.onlyWhenNone' },
++    { value: 'replace', labelKey: 'settings.mode.replace' }
++  ]
++};
++
+ const ROTATION_OPTIONS = [
+   { value: 'round-robin', labelKey: 'settings.strategy.roundRobin' },
+   { value: 'failover', labelKey: 'settings.strategy.failover' }
+@@ -97,6 +114,14 @@ function createFieldInput(key, value) {
+     `;
+   }
+ 
++  const fieldName = String(key).split('.').pop();
++  if (SELECT_OPTIONS[fieldName]) {
++    const options = SELECT_OPTIONS[fieldName].map(opt =>
++      `<option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>${t(opt.labelKey)}</option>`
++    ).join('');
++    return `<select class="form-control" data-key="${key}">${options}</select>`;
++  }
++
+   if (key.endsWith('.rotation_strategy')) {
+     const radios = ROTATION_OPTIONS.map(opt =>
+       `<label class="radio-option">
+diff --git a/tests/unit/test_admin_argon_status.py b/tests/unit/test_admin_argon_status.py
+new file mode 100644
+index 0000000..f9a1e13
+--- /dev/null
++++ b/tests/unit/test_admin_argon_status.py
+@@ -0,0 +1,73 @@
++"""/admin/status must explain an Argon slowdown, and /admin/argon/reset must be able to end it.
++
++Before this, "Argon is slow / answers nothing" had no answer in the panel: the stall breaker lived in a module
++nobody could see, the agent-loop counter was only in the logs, and the only way out of an open breaker was to
++wait out ARGON_STALL_BREAKER_SECONDS.
++"""
++from app.config import settings
++from app.core import agent_loop, argon_breaker
++from app.utils.tools import TOOL_LOOP_REMINDER
++
++_AUTH = {"Authorization": "Bearer sk-test-key", "X-Admin-Key": "sk-test-key"}
++
++
++def _get(client, path):
++    return client.get(path, headers=_AUTH)
++
++
++def _post(client, path):
++    return client.post(path, headers=_AUTH)
++
++
++def test_status_reports_the_argon_and_agent_loop_state(client, monkeypatch):
++    argon_breaker.reset()
++    agent_loop.reset_stats()
++    monkeypatch.setattr(settings, "argon_stall_breaker_seconds", 60)
++    argon_breaker.trip("first-frame", "TimeoutError")
++
++    body = _get(client, "/admin/status").json()
++    argon = body["argon"]
++    assert argon["open"] is True
++    assert argon["reason"] == "first-frame"
++    assert argon["note"] == "TimeoutError"
++    assert 0 < argon["seconds_left"] <= 60
++    assert argon["trips"] >= 1
++
++    loop = body["agent_loop"]
++    assert loop["detected"] == 0 and loop["corrected"] == 0
++    assert loop["tool_loop_reminder"] is True
++    assert loop["stall_guard"] is True
++    assert loop["fallback_model"] == settings.argon_fallback_model
++    assert "salvaged_empty_streams" in loop
++    argon_breaker.reset()
++
++
++def test_reset_closes_the_breaker(client, monkeypatch):
++    monkeypatch.setattr(settings, "argon_stall_breaker_seconds", 60)
++    argon_breaker.trip("timeout", "")
++    assert argon_breaker.is_open()
++
++    body = _post(client, "/admin/argon/reset").json()
++    assert body["success"] is True
++    assert body["was_open"] is True
++    assert body["argon"]["open"] is False
++    assert argon_breaker.is_open() is False
++
++
++def test_breaker_with_a_zero_ttl_stays_closed_but_still_counts_trips(monkeypatch):
++    """ARGON_STALL_BREAKER_SECONDS=0 disables the substitution, not the observability."""
++    argon_breaker.reset()
++    monkeypatch.setattr(settings, "argon_stall_breaker_seconds", 0)
++    assert argon_breaker.enabled() is False
++    argon_breaker.trip("timeout", "")
++    assert argon_breaker.is_open() is False
++    snap = argon_breaker.snapshot()
++    assert snap["trips"] >= 1 and snap["open"] is False
++    argon_breaker.reset()
++
++
++def test_reminder_text_is_the_one_the_model_actually_sees():
++    """Guard against editing the reminder into something that no longer forbids promises."""
++    low = TOOL_LOOP_REMINDER.lower()
++    assert "tool_call" in low
++    assert "promise" in low
+diff --git a/tests/unit/test_agent_loop_guard.py b/tests/unit/test_agent_loop_guard.py
+new file mode 100644
+index 0000000..23f7f21
+--- /dev/null
++++ b/tests/unit/test_agent_loop_guard.py
+@@ -0,0 +1,120 @@
++"""Agent-loop guard (app/core/agent_loop.py).
++
++The failure this covers: inside a coding harness the model answers with a *promise* ("I'll inspect the files
++now and let you know") instead of a tool_call. The harness only sees text, assumes the assistant is done and
++goes idle -- the user has to nudge it by hand, every round.
++
++Contract under test:
++- a promise-shaped reply is detected (EN and SK), everything else is left alone;
++- detection is conservative: code fences, tool payloads, long answers, empty text and plain questions are not
++  stalls;
++- the correction asks the model exactly once, and only the corrected text that actually carries a tool call
++  replaces the original;
++- a failing regenerator never turns a graceful reply into an error.
++"""
++import asyncio
++
++from app.core import agent_loop
++
++
++def _run(coro):
++    return asyncio.run(coro)
++
++
++# ---- looks_like_stall -----------------------------------------------------------------------------------
++
++def test_promise_replies_are_stalls():
++    for text in (
++        "I'll inspect the files and let you know.",
++        "I am working on it now.",
++        "Let me check the repository structure first.",
++        "I will report back once the implementation is done.",
++        "Give me a moment to review the code.",
++        "Pracujem na tom, dám ti vedieť.",
++        "Idem na to a spustil som realizáciu.",
++        "Začínam implementáciou Canvas enginu.",
++        "Budem ťa informovať po nasadení.",
++    ):
++        assert agent_loop.looks_like_stall(text), text
++
++
++def test_real_answers_are_not_stalls():
++    for text in (
++        "",
++        "   ",
++        "Done. The file static/app/canvas-engine.js now contains the sandbox.",
++        "Tests pass: 80 passed in 4.2s.",
++        "Which directory should the engine live in?",
++        '{"status": "tool_use", "tool_calls": [{"name": "read_file", "arguments": {"path": "a.py"}}]}',
++        "```python\nprint('I will not be retried')\n```",
++        "I'll inspect " * 200,          # long answer = work product, not a stall
++    ):
++        assert not agent_loop.looks_like_stall(text), text
++
++
++# ---- guard_tool_loop ------------------------------------------------------------------------------------
++
++def test_guard_retries_once_and_uses_the_tool_call():
++    calls = []
++
++    async def regenerate(nudge):
++        calls.append(nudge)
++        return '{"status": "tool_use", "tool_calls": [{"name": "ls", "arguments": {}}]}'
++
++    text, corrected = _run(agent_loop.guard_tool_loop("I'll start by inspecting the repo.", regenerate))
++    assert corrected is True
++    assert len(calls) == 1, "the guard must never retry more than once"
++    assert "tool_call" in calls[0], "the corrective nudge must be what is passed to the regenerator"
++    assert '"tool_calls"' in text
++
++
++def test_guard_keeps_the_first_reply_when_the_retry_still_promises():
++    async def regenerate(nudge):
++        return "Let me check the files and I'll report back."
++
++    text, corrected = _run(agent_loop.guard_tool_loop("I'll inspect the files.", regenerate))
++    assert corrected is False
++    assert text == "I'll inspect the files."
++
++
++def test_guard_keeps_the_first_reply_when_the_retry_fails():
++    async def regenerate(nudge):
++        raise RuntimeError("upstream exploded")
++
++    text, corrected = _run(agent_loop.guard_tool_loop("I'll inspect the files.", regenerate))
++    assert corrected is False
++    assert text == "I'll inspect the files."
++
++
++def test_guard_is_inert_for_non_stalls_and_when_disabled():
++    calls = []
++
++    async def regenerate(nudge):
++        calls.append(nudge)
++        return "never used"
++
++    # a plain answer: nothing to correct
++    text, corrected = _run(agent_loop.guard_tool_loop("All tests pass.", regenerate))
++    assert (text, corrected) == ("All tests pass.", False)
++    # disabled by setting: not even the detection runs
++    text, corrected = _run(agent_loop.guard_tool_loop("I'll inspect the files.", regenerate, enabled=False))
++    assert (text, corrected) == ("I'll inspect the files.", False)
++    assert calls == []
++
++
++def test_stats_count_detections_and_corrections():
++    agent_loop.reset_stats()
++
++    async def good(nudge):
++        return '{"status": "tool_use", "tool_calls": [{"name": "ls", "arguments": {}}]}'
++
++    async def bad(nudge):
++        return "I'll do it later."
++
++    _run(agent_loop.guard_tool_loop("I'll inspect the files.", good))
++    _run(agent_loop.guard_tool_loop("Pracujem na tom.", bad))
++    _run(agent_loop.guard_tool_loop("Nothing to see here.", good))
++
++    assert agent_loop.stats() == {"detected": 2, "corrected": 1}
++    agent_loop.reset_stats()
++    assert agent_loop.stats() == {"detected": 0, "corrected": 0}
+diff --git a/tests/unit/test_argon_fallback_serving.py b/tests/unit/test_argon_fallback_serving.py
+new file mode 100644
+index 0000000..a67e8a7
+--- /dev/null
++++ b/tests/unit/test_argon_fallback_serving.py
+@@ -0,0 +1,194 @@
++"""Argon -> Flash fallback (app/core/argon_fallback.py): one implementation, and no silent substitutions.
++
++Covered:
++- plan(): Argon by default; the stall breaker and ARGON_ALWAYS_FALLBACK are named substitutions;
++- generate(): an upstream error / empty reply / Google web error degrades to the fallback model and marks the
++  result with ``argon_fallback``; with the fallback off the original error propagates;
++- generate_stream(): a dead-but-silent Argon stream gets exactly one plain Argon retry, then the fallback
++  starts *behind a serve_marker frame* before any content -- and once content has streamed, nothing switches;
++- conversation_id is forwarded to the pool (regression: the first version dropped it).
++"""
++import asyncio
++
++import pytest
++
++from app.config import settings
++from app.core import argon_breaker, argon_fallback
++
++
++def _run(coro):
++    return asyncio.run(coro)
++
++
++class _Pool:
++    """Minimal account_pool stand-in: records the calls, replays scripted answers per model."""
++
++    def __init__(self, non_stream=None, stream=None):
++        self.calls = []
++        self.stream_calls = []
++        self._non_stream = list(non_stream or [])
++        self._stream = list(stream or [])
++
++    async def generate(self, prompt, model, conversation_id="", attachments=None,
++                       gem_id=None, account_id=None, extended_thinking=False):
++        self.calls.append({"model": model, "conversation_id": conversation_id, "thinking": extended_thinking})
++        item = self._non_stream.pop(0)
++        if isinstance(item, Exception):
++            raise item
++        return item
++
++    async def generate_stream(self, prompt, model, conversation_id="", attachments=None,
++                              gem_id=None, account_id=None, extended_thinking=False):
++        self.stream_calls.append({"model": model, "conversation_id": conversation_id})
++        for evt in self._stream.pop(0):
++            if isinstance(evt, Exception):
++                raise evt
++            yield evt
++
++
++_OK_ARGON = {"text": "argon answer", "images": [], "thoughts": "", "conversation_id": "c1"}
++_EMPTY = {"text": "", "images": [], "thoughts": "", "conversation_id": "c1"}
++_WEB_ERROR = {"text": "Sorry, something went wrong. Please try your request again.", "images": [],
++              "thoughts": "", "conversation_id": "c1"}
++_FLASH_OK = {"text": "flash answer", "images": [], "thoughts": "", "conversation_id": "c2"}
++
++
++@pytest.fixture(autouse=True)
++def _reset_breaker():
++    argon_breaker.reset()
++    yield
++    argon_breaker.reset()
++
++
++# ---- plan -----------------------------------------------------------------------------------------------
++
++def test_plan_argon_by_default():
++    model, is_argon, thinking, served = argon_fallback.plan("gemini-4-argon", "gemini-4-argon")
++    assert (model, is_argon, thinking) == ("gemini-4-argon", True, False)
++    assert served == argon_fallback.SERVED_BY_ARGON
++
++
++def test_plan_names_the_stall_breaker_substitution(monkeypatch):
++    monkeypatch.setattr(settings, "argon_stall_breaker_seconds", 60)
++    argon_breaker.trip("first-frame", "TimeoutError")
++    model, is_argon, thinking, served = argon_fallback.plan("gemini-4-argon", "gemini-4-argon")
++    assert served == "stall_breaker"
++    assert model == settings.argon_fallback_model
++    assert (is_argon, thinking) == (False, True)
++
++
++def test_plan_names_always_fallback(monkeypatch):
++    monkeypatch.setattr(settings, "argon_always_fallback", True)
++    _, _, _, served = argon_fallback.plan("gemini-4-argon", "gemini-4-argon")
++    assert served == "argon_always_fallback"
++
++
++# ---- generate -------------------------------------------------------------------------------------------
++
++def test_generate_passes_argon_conversation_id_through():
++    pool = _Pool(non_stream=[_OK_ARGON])
++    result = _run(argon_fallback.generate(pool, "p", "gemini-4-argon", None,
++                                          is_argon=True, conversation_id="gconv-9"))
++    assert result["text"] == "argon answer"
++    assert pool.calls[0]["conversation_id"] == "gconv-9"
++    assert "argon_fallback" not in result
++
++
++def test_generate_falls_back_and_marks_on_error():
++    pool = _Pool(non_stream=[RuntimeError("upstream 500"), _FLASH_OK])
++    result = _run(argon_fallback.generate(pool, "p", "gemini-4-argon", None, is_argon=True))
++    assert result["text"] == "flash answer"
++    assert result["argon_fallback"]["served_by"] == argon_fallback.SERVED_BY_FLASH
++    assert result["argon_fallback"]["reason"] == "argon_error"
++    assert pool.calls[1]["model"] == settings.argon_fallback_model
++    assert pool.calls[1]["thinking"] is True
++
++
++def test_generate_falls_back_on_empty_and_web_error_replies():
++    for bad, reason in ((_EMPTY, "empty_reply"), (_WEB_ERROR, "google_web_error")):
++        pool = _Pool(non_stream=[bad, _FLASH_OK])
++        result = _run(argon_fallback.generate(pool, "p", "gemini-4-argon", None, is_argon=True))
++        assert result["argon_fallback"]["reason"] == reason
++        assert result["text"] == "flash answer"
++
++
++def test_generate_raises_when_the_fallback_is_disabled(monkeypatch):
++    monkeypatch.setattr(settings, "argon_fallback_to_flash", False)
++    pool = _Pool(non_stream=[RuntimeError("boom")])
++    with pytest.raises(RuntimeError, match="boom"):
++        _run(argon_fallback.generate(pool, "p", "gemini-4-argon", None, is_argon=True))
++
++
++def test_generate_raises_the_fallback_error_when_both_fail():
++    pool = _Pool(non_stream=[RuntimeError("argon dead"), RuntimeError("flash dead too")])
++    with pytest.raises(RuntimeError, match="flash dead too"):
++        _run(argon_fallback.generate(pool, "p", "gemini-4-argon", None, is_argon=True))
++
++
++def test_generate_never_returns_an_empty_completion_when_the_fallback_is_on():
++    """An empty Argon reply must not reach the client as a successful completion."""
++    pool = _Pool(non_stream=[_EMPTY, _EMPTY])
++    result = _run(argon_fallback.generate(pool, "p", "gemini-4-argon", None, is_argon=True))
++    assert result["text"] == ""          # both empty: nothing better exists, but it is marked...
++    assert result["argon_fallback"]["reason"] == "empty_reply"   # ...so the routers/headers can say so
++
++
++# ---- generate_stream ------------------------------------------------------------------------------------
++
++def _collect(pool, **kw):
++    async def run():
++        return [evt async for evt in argon_fallback.generate_stream(pool, "p", "gemini-4-argon", None, **kw)]
++    return _run(run())
++
++
++def test_stream_argon_success_has_no_marker():
++    pool = _Pool(stream=[[{"type": "delta", "text": "hi"},
++                          {"type": "final", "text": "hi", "images": [], "thoughts": "",
++                           "conversation_id": "c1"}]])
++    events = _collect(pool, is_argon=True, conversation_id="g")
++    assert [e["type"] for e in events] == ["delta", "final"]
++    assert pool.stream_calls[0]["conversation_id"] == "g"
++
++
++def test_stream_empty_answer_retries_argon_once_then_falls_back():
++    pool = _Pool(
++        stream=[[{"type": "final", "text": "", "images": [], "thoughts": "", "conversation_id": "c1"}]],
++        non_stream=[_OK_ARGON],   # the single plain-Argon retry succeeds
++    )
++    events = _collect(pool, is_argon=True, conversation_id="g")
++    assert [e["type"] for e in events] == ["delta", "thoughts", "final"]
++    assert events[0]["text"] == "argon answer"
++    assert not any(e["type"] == "serve_marker" for e in events), "a successful retry needs no marker"
++    assert len(pool.calls) == 1, "exactly one non-streaming retry"
++
++
++def test_stream_dead_answer_retries_then_emits_the_marker_before_flash_content():
++    pool = _Pool(
++        stream=[[{"type": "final", "text": "", "images": [], "thoughts": "", "conversation_id": "c1"}],
++                [{"type": "delta", "text": "flash "}, {"type": "final", "text": "flash answer",
++                                                       "images": [], "thoughts": "", "conversation_id": "c2"}]],
++        non_stream=[_EMPTY],
++    )
++    events = _collect(pool, is_argon=True, conversation_id="g")
++    assert [e["type"] for e in events] == ["serve_marker", "delta", "final"]
++    assert events[0]["served_by"] == argon_fallback.SERVED_BY_FLASH
++    assert events[0]["reason"] == "empty_stream"
++    assert pool.stream_calls[-1]["model"] == settings.argon_fallback_model
++
++
++def test_stream_error_before_any_content_falls_back_behind_the_marker():
++    pool = _Pool(
++        stream=[[RuntimeError("connect reset")],
++                [{"type": "final", "text": "flash answer", "images": [], "thoughts": "",
++                  "conversation_id": "c2"}]],
++    )
++    events = _collect(pool, is_argon=True)
++    assert events[0]["type"] == "serve_marker"
++    assert events[0]["reason"] == "argon_error"
++
++
++def test_stream_never_switches_after_content_was_streamed():
++    pool = _Pool(stream=[[{"type": "delta", "text": "half an ans"}, RuntimeError("connection lost")]])
++    with pytest.raises(RuntimeError, match="connection lost"):
++        _collect(pool, is_argon=True)
++    assert len(pool.stream_calls) == 1, "no silent second attempt after content went out"
+diff --git a/tests/unit/test_argon_request_uuid_pairing.py b/tests/unit/test_argon_request_uuid_pairing.py
+new file mode 100644
+index 0000000..b1a9f47
+--- /dev/null
++++ b/tests/unit/test_argon_request_uuid_pairing.py
+@@ -0,0 +1,134 @@
++"""StreamGenerate payload/header invariants the Argon rework got wrong.
++
++1. **Companion UUID pairing.** ``_encode_payload_thinking`` mints one per-request UUID, stores it at
++   ``inner[59]`` and returns it; the ``x-goog-ext-525005358-jspb`` header must echo that SAME UUID. The Argon
++   rewrite threw the returned value away (``encoded, _ = ...``) and minted a second, unrelated UUID for the
++   header — upstream paired them, and nothing documented the change. One invariant test per call site.
++2. **No server-side continuation.** ``inner[2]`` is the metadata block, not a conversation slot, so a stored
++   ``conversation_id`` cannot be honoured. That is reported once instead of being discovered by a user whose
++   agent suddenly answers without context.
++"""
++import asyncio
++import json
++
++import pytest
++
++import app.core.gemini_client as gc
++
++
++class _Jar:
++    def get_all(self):
++        return {}
++
++    def set(self, *a, **k):
++        return None
++
++    def update_from_response(self, *a, **k):
++        return None
++
++
++def _client():
++    c = gc.GeminiWebClient(psid="psid", psidts="psidts")
++    c._cookie_jar = _Jar()
++    c._current_target = gc.header_builder.get_impersonate_target()
++    c._session_token = "token"
++    c._healthy = True
++    return c
++
++
++def _inner_uuid(request_body: dict) -> str:
++    inner = json.loads(json.loads(request_body["f.req"])[1])
++    return inner[59]
++
++
++# ---- 1. payload <-> header UUID pairing -----------------------------------------------------------------
++
++def test_send_request_echoes_the_payload_uuid_in_the_companion_header():
++    client = _client()
++    captured = {}
++
++    class FakeResp:
++        status_code = 500
++        text = "nope"
++
++    class FakeSession:
++        async def post(self, url, **kwargs):
++            captured.update(kwargs.get("data") or {})
++            captured["headers"] = kwargs.get("headers") or {}
++            return FakeResp()
++
++    client._http = FakeSession()
++
++    with pytest.raises(Exception):
++        asyncio.run(client._send_request("prompt", model="gemini-4-argon"))
++
++    header_uuid = json.loads(captured["headers"]["x-goog-ext-525005358-jspb"])[0]
++    assert header_uuid == _inner_uuid(captured), (
++        "the companion header UUID and the payload's inner[59] must be the same per-request id"
++    )
++
++
++def test_generate_stream_echoes_the_payload_uuid_in_the_companion_header():
++    client = _client()
++    captured = {}
++
++    class FakeStreamCtx:
++        def __init__(self, **kwargs):
++            captured.update(kwargs.get("data") or {})
++            captured["headers"] = kwargs.get("headers") or {}
++
++        async def __aenter__(self):
++            raise RuntimeError("stop stream test")
++
++        async def __aexit__(self, *args):
++            return False
++
++    class FakeSession:
++        def stream(self, method, url, **kwargs):
++            return FakeStreamCtx(**kwargs)
++
++    client._http = FakeSession()
++
++    async def drain():
++        async for _ in client.generate_stream("hi", model="gemini-4-argon"):
++            pass
++
++    with pytest.raises(RuntimeError, match="stop stream test"):
++        asyncio.run(drain())
++
++    header_uuid = json.loads(captured["headers"]["x-goog-ext-525005358-jspb"])[0]
++    assert header_uuid == _inner_uuid(captured)
++    assert header_uuid == header_uuid.upper(), "the protocol form is upper-case"
++
++
++# ---- 2. the conversation slot does not exist ------------------------------------------------------------
++
++def test_thinking_payload_has_no_conversation_slot():
++    inner = json.loads(json.loads(
++        _client()._encode_payload_thinking("hi", "gemini-4-argon", "gconv-123", None, None)[0])[1])
++    assert inner[2] != "gconv-123", "inner[2] is the metadata block, not a conversation id"
++    assert isinstance(inner[2], list)
++    assert "gconv-123" not in json.dumps(inner), "the id must not leak into an unrelated slot"
++
++
++def test_dropped_conversation_is_reported_once(monkeypatch, caplog):
++    monkeypatch.setattr(gc, "_continuation_drop_warned", False)
++    client = _client()
++    with caplog.at_level("WARNING", logger="app.core.gemini_client"):
++        client._encode_payload_thinking("hi", "gemini-4-argon", "gconv-123", None, None)
++        client._encode_payload_thinking("hi", "gemini-4-argon", "gconv-456", None, None)
++
++    hits = [r for r in caplog.records if "cannot continue a stored conversation" in r.getMessage()]
++    assert len(hits) == 1, "the warning must be logged once per process, not per request"
++    assert "gconv" not in caplog.text, "the opaque conversation id must not be printed"
++
++
++def test_legacy_encoder_is_not_used_at_runtime():
++    """`_encode_payload` is kept only as a byte-identity reference; runtime must use the thinking payload."""
++    src = (gc.__file__ and open(gc.__file__, encoding="utf-8").read()) or ""
++    body = src.split("def _encode_payload_thinking", 1)[1]
++    for line in body.splitlines():
++        stripped = line.strip()
++        if stripped.startswith("#") or "def " in stripped:
++            continue
++        assert "self._encode_payload(" not in stripped, "legacy 4-element payload is back on the hot path"
+diff --git a/tests/unit/test_argon_system_prompt.py b/tests/unit/test_argon_system_prompt.py
+index efa6bba..aa94a85 100644
+--- a/tests/unit/test_argon_system_prompt.py
++++ b/tests/unit/test_argon_system_prompt.py
+@@ -1,7 +1,10 @@
+ """ARGON_SYSTEM_PROMPT (settings.argon_system_prompt) injection on the OpenAI and Claude routers.
+ 
+ Contract:
+-- The prompt is prepended to Argon requests only, and only when the caller sent no system prompt of its own.
++- The prompt is injected into Argon requests only, on new conversations.
++- Default mode "merge": the Argon rules go in front of the caller's own system/developer message. Coding
++  harnesses (Codex, Cline, OpenCode) always send theirs, and the old "skip when the caller sent one" rule
++  silently abandoned the Argon rules exactly there (ARGON_SYSTEM_PROMPT_MODE=only_when_none restores it).
+ - It goes in *before* the prompt is flattened and before the tool prompt is wrapped around it, so tool calling
+   keeps working on Argon.
+ - A continuing conversation (valid stored gemini_conv_id) still sends only the last user message: the upstream
+@@ -118,20 +121,50 @@ def test_openai_system_prompt_does_not_drop_the_tool_prompt(argon_env, oai):
+     assert prompt.index(_TOOL_NAME) < prompt.index(_SYS) < prompt.index("FIRST-USER-TURN")
+ 
+ 
+-def test_openai_keeps_callers_own_system_message(argon_env, oai):
++def test_openai_merges_argon_rules_in_front_of_callers_system_message(argon_env, oai):
++    """Default mode: BOTH prompts reach the model, Argon's rules first."""
+     messages = [{"role": "system", "content": "CALLER-SYSTEM"}, *_HISTORY]
+     prompt, _ = oai(messages=messages)
++    assert "CALLER-SYSTEM" in prompt, "the caller's own system prompt was dropped"
++    assert _SYS in prompt
++    assert prompt.index(_SYS) < prompt.index("CALLER-SYSTEM")
++
++
++def test_openai_only_when_none_mode_keeps_the_legacy_behaviour(argon_env, oai, monkeypatch):
++    monkeypatch.setattr(argon_env, "argon_system_prompt_mode", "only_when_none")
++    prompt, _ = oai(messages=[{"role": "system", "content": "CALLER-SYSTEM"}, *_HISTORY])
+     assert "CALLER-SYSTEM" in prompt
+     assert _SYS not in prompt
+ 
+ 
+-def test_openai_continuing_conversation_sends_only_last_user_message(argon_env, oai):
++def test_openai_replace_mode_uses_the_argon_rules_instead(argon_env, oai, monkeypatch):
++    monkeypatch.setattr(argon_env, "argon_system_prompt_mode", "replace")
++    prompt, _ = oai(messages=[{"role": "system", "content": "CALLER-SYSTEM"}, *_HISTORY])
++    assert _SYS in prompt
++    assert "CALLER-SYSTEM" not in prompt, "replace mode must drop the caller's system prompt"
++
++
++def test_openai_keeps_the_full_history_when_the_server_cannot_continue(argon_env, oai):
++    """A stored conversation_id is forwarded, but the thinking payload has no slot for it upstream (spec
++    §4.3), so the prompt must keep the client's whole history — stripping it to the last message used to lose
++    the context silently (see SERVER_SIDE_CONTINUATION)."""
++    oai.store(_FakeStore({"conv-1": _FakeConv(gemini_conv_id="gconv-123")}))
++    prompt, conv_id = oai(conversation_id="conv-1", tools=[_OAI_TOOL])
++    # The id is dropped rather than forwarded: nothing upstream can use it, and forwarding it kept the
++    # "conversation expired -> resend the full prompt" retry path alive, which would just repeat this call.
++    assert conv_id == ""
++    assert "FIRST-USER-TURN" in prompt and "LAST-USER-TURN" in prompt, "the history was stripped again"
++    assert _SYS not in prompt, "the system prompt is re-sent with the history, no injection needed"
++    assert _TOOL_NAME in prompt
++
++
++def test_openai_strips_the_history_only_when_continuation_is_enabled(argon_env, oai, monkeypatch):
++    monkeypatch.setattr(argon_env, "server_side_continuation", True)
+     oai.store(_FakeStore({"conv-1": _FakeConv(gemini_conv_id="gconv-123")}))
+     prompt, conv_id = oai(conversation_id="conv-1", tools=[_OAI_TOOL])
+     assert conv_id == "gconv-123"
+-    assert _SYS not in prompt
+-    assert "FIRST-USER-TURN" not in prompt, "whole history was re-sent on a continuing conversation"
+-    assert prompt.endswith("LAST-USER-TURN")
++    assert "FIRST-USER-TURN" not in prompt, "whole history was re-sent although the server continues it"
++    assert "LAST-USER-TURN" in prompt
+     assert _TOOL_NAME in prompt
+ 
+ 
+@@ -154,10 +187,11 @@ def test_claude_prepends_system_prompt_and_keeps_tools(argon_env, claude):
+     assert _TOOL_NAME in prompt
+ 
+ 
+-def test_claude_keeps_callers_own_system(argon_env, claude):
++def test_claude_merges_argon_rules_in_front_of_callers_system(argon_env, claude):
+     prompt = claude(system="CALLER-SYSTEM")
+-    assert "CALLER-SYSTEM" in prompt
+-    assert _SYS not in prompt
++    assert "CALLER-SYSTEM" in prompt, "the caller's own system prompt was dropped"
++    assert _SYS in prompt
++    assert prompt.index(_SYS) < prompt.index("CALLER-SYSTEM")
+ 
+ 
+ def test_claude_non_argon_model_is_untouched(argon_env, claude):
+@@ -180,7 +214,10 @@ def test_openai_system_prompt_still_applies_when_stall_breaker_serves_flash(argo
+     assert _SYS in prompt
+ 
+ 
+-def test_openai_developer_message_counts_as_callers_system_prompt(argon_env, oai):
++def test_openai_developer_message_no_longer_disables_the_argon_rules(argon_env, oai):
++    """The regression Codex hit: it always sends a `developer` prompt, which used to switch the Argon
++    rules off entirely (the injected prompt was never applied to the one client it was written for)."""
+     prompt, _ = oai(messages=[{"role": "developer", "content": "CALLER-DEV"}, *_HISTORY])
+     assert "CALLER-DEV" in prompt
+-    assert _SYS not in prompt
++    assert _SYS in prompt, "a developer message disabled ARGON_SYSTEM_PROMPT again"
++    assert prompt.index(_SYS) < prompt.index("CALLER-DEV")
+diff --git a/tests/unit/test_image_stream_fix.py b/tests/unit/test_image_stream_fix.py
+index 7230728..146cfff 100644
+--- a/tests/unit/test_image_stream_fix.py
++++ b/tests/unit/test_image_stream_fix.py
+@@ -16,9 +16,13 @@ def test_buffered_stream_emits_immediate_sse_and_keepalive():
+     # First role frame before awaiting generate result
+     assert "async def _stream_response_buffered" in src
+     idx_fn = src.index("async def _stream_response_buffered")
+-    body = src[idx_fn : idx_fn + 2500]
++    body = src[idx_fn : idx_fn + 3500]
+     assert "StreamDelta(role=\"assistant\")" in body
+-    assert "_sse_keepalive_during(gen_task)" in body
++    # Keepalive while the upstream generate() runs. The call is wrapped in the local _keepalive_task()
++    # helper (which itself pumps _sse_keepalive_during and cancels the task on client disconnect), so the
++    # invariant to guard is "the generate task is driven through the keepalive helper".
++    assert "async for ping in _keepalive_task(gen_task)" in body
++    assert "_sse_keepalive_during(task)" in body
+ 
+ 
+ def test_image_download_uses_s2048_and_short_timeout():
+diff --git a/tests/unit/test_openai_conversation_fallback.py b/tests/unit/test_openai_conversation_fallback.py
+index 7277936..23e896d 100644
+--- a/tests/unit/test_openai_conversation_fallback.py
++++ b/tests/unit/test_openai_conversation_fallback.py
+@@ -1,14 +1,17 @@
+ """Regression tests for multi-turn context in POST /v1/chat/completions.
+ 
+ An audit claimed that a stale or unknown ``conversation_id`` drops earlier turns
+-and only the last user message reaches Gemini. The router actually behaves the
+-other way round: only a *valid* stored ``gemini_conv_id`` sends the last user
+-message alone (server-side session continuation). In every other case
+-(no conversation_id, unknown/stale id, stored conversation without a
+-gemini_conv_id) the whole message history is flattened into the prompt and the
+-upstream call gets an empty conversation id.
+-
+-These tests pin that behavior so a future refactor cannot silently regress it.
++and only the last user message reaches Gemini. The router must always send the
++whole flattened history, because **nothing upstream can continue a conversation**:
++the 81-element StreamGenerate payload has no slot for a conversation id
++(``inner[2]`` is the metadata block, spec §4.3 — see ``SERVER_SIDE_CONTINUATION``).
++Stripping the prompt down to the last user message therefore used to lose the
++context silently: the client's id was "accepted" and the model answered without
++any history.
++
++Only when ``SERVER_SIDE_CONTINUATION=true`` (i.e. after re-verifying the protocol)
++does a valid stored ``gemini_conv_id`` send the last user message alone. These
++tests pin both behaviours so a future refactor cannot silently regress either.
+ """
+ 
+ _AUTH = {"Authorization": "Bearer sk-test-key"}
+@@ -77,8 +80,19 @@ def test_stored_conversation_without_gemini_id_keeps_full_history(gem_client, mo
+     _assert_full_history(captured)
+ 
+ 
+-def test_valid_gemini_conv_id_sends_only_last_user_message(gem_client, monkeypatch):
+-    """Control: the one case that really does send just the latest user message."""
++def test_valid_gemini_conv_id_still_sends_the_full_history(gem_client, monkeypatch):
++    """The payload cannot continue a stored conversation, so the history must survive."""
++    store = _FakeStore({"conv-2": _FakeConv(gemini_conv_id="gconv-123")})
++    captured = _post(gem_client, monkeypatch, store, conversation_id="conv-2")
++    _assert_full_history(captured)
++
++
++def test_continuation_flag_restores_last_message_only(gem_client, monkeypatch):
++    """SERVER_SIDE_CONTINUATION=true is the escape hatch: strip to the newest user message and forward the
++    stored id (only correct once the wire protocol can really carry the conversation)."""
++    from app.config import settings
++
++    monkeypatch.setattr(settings, "server_side_continuation", True)
+     store = _FakeStore({"conv-2": _FakeConv(gemini_conv_id="gconv-123")})
+     captured = _post(gem_client, monkeypatch, store, conversation_id="conv-2")
+     assert captured["conversation_id"] == "gconv-123"
+diff --git a/tests/unit/test_streaming_keepalive_wiring.py b/tests/unit/test_streaming_keepalive_wiring.py
+index a3c44a3..f44a8ec 100644
+--- a/tests/unit/test_streaming_keepalive_wiring.py
++++ b/tests/unit/test_streaming_keepalive_wiring.py
+@@ -48,7 +48,8 @@ def test_chat_realstream_no_ping_when_fast(gem_client, monkeypatch):
+ def test_openai_still_has_buffered_keepalive():
+     """回归：buffered 路径心跳（既有）不受影响。"""
+     src = (_ROOT / "app" / "routers" / "openai.py").read_text(encoding="utf-8")
+-    assert "_sse_keepalive_during(gen_task)" in src
++    assert "_keepalive_task(gen_task)" in src, "generate task no longer driven through the keepalive helper"
++    assert "_sse_keepalive_during(task)" in src
+ 
+ 
+ def test_responses_stream_emits_keepalive_ping_during_silence(gem_client, monkeypatch):
+diff --git a/tests/unit/test_thinking_models.py b/tests/unit/test_thinking_models.py
+index 8c07628..febde9e 100644
+--- a/tests/unit/test_thinking_models.py
++++ b/tests/unit/test_thinking_models.py
+@@ -21,10 +21,12 @@ def test_model_number_helper_resolves_public_names():
+ 
+ 
+ import json
+-from app.core.gemini_client import GeminiWebClient, _build_model_header_thinking, MODEL_HEADER_KEY
++from app.core.gemini_client import GeminiWebClient, _build_model_header, MODEL_HEADER_KEY
+ 
+ def test_thinking_header_15_elements():
+-    h = _build_model_header_thinking("gemini-flash", "SESSION-UUID-1")
++    # One header form serves thinking and non-thinking requests alike (2026-10-13 protocol): the old
++    # 17-element variant was dead code that merely delegated here.
++    h = _build_model_header("gemini-flash")
+     arr = json.loads(h[MODEL_HEADER_KEY])
+     assert len(arr) == 15
+     assert arr[4] == "56fdd199312815e2" or arr[4] == "fbb127bbb056c959"  # flash id (family)
+@@ -97,7 +99,7 @@ def test_argon_payload_encoding():
+     assert inner[79] == 8          # model_number for argon
+     assert inner[80] == 2          # extended thinking
+     
+-    header = _build_model_header_thinking("gemini-4-argon", "SESSION-UUID")
++    header = _build_model_header("gemini-4-argon")
+     arr = json.loads(header[MODEL_HEADER_KEY])
+     assert len(arr) == 15
+     assert arr[4] == "95a4c0abcba24364"  # argon model id
+diff --git a/tests/unit/test_tool_blocks_prompt.py b/tests/unit/test_tool_blocks_prompt.py
+index c25c53a..8252c0c 100644
+--- a/tests/unit/test_tool_blocks_prompt.py
++++ b/tests/unit/test_tool_blocks_prompt.py
+@@ -63,8 +63,14 @@ def test_openai_conversation_continuation_non_str_text_no_500(gem_client, monkey
+     build_prompt_from_messages 把整段历史重发一遍。用一段带 None-text 块 + 一段正常 text 块
+     的最新消息钉住确切 prompt 值，混入更早的历史消息以证明它没有被重新拼进去。"""
+     import app.routers.openai as oai
++    from app.config import settings
+     from app.core.conversation_store import Conversation
+ 
++    # The continuation branch (only the newest user message) is opt-in now: the 81-element StreamGenerate
++    # payload cannot continue a conversation server-side, so the default sends the full history. The branch
++    # must stay correct for the case it is enabled, which is what this test pins.
++    monkeypatch.setattr(settings, "server_side_continuation", True)
++
+     fake_conv = Conversation("conv-1", gemini_conv_id="gconv-1")
+     captured = {}
+ 
+@@ -101,8 +107,12 @@ def test_openai_conversation_continuation_image_only_latest_takes_last_user_bran
+     （每个图片块贡献一个空字符串，用换行连接多个块），continuation 分支仍应被走通—— 不能
+     像加固前那样因误删无 text 块而把结果变假，进而错误落回整段历史重发。"""
+     import app.routers.openai as oai
++    from app.config import settings
+     from app.core.conversation_store import Conversation
+ 
++    # Same as above: the continuation branch is opt-in, the hardening inside it must survive.
++    monkeypatch.setattr(settings, "server_side_continuation", True)
++
+     fake_conv = Conversation("conv-2", gemini_conv_id="gconv-2")
+     captured = {}
+ 
+diff --git a/tests/unit/test_tool_loop_reminder.py b/tests/unit/test_tool_loop_reminder.py
+new file mode 100644
+index 0000000..b88e8db
+--- /dev/null
++++ b/tests/unit/test_tool_loop_reminder.py
+@@ -0,0 +1,42 @@
++"""End-of-prompt tool-loop reminder (app/utils/tools.py).
++
++The community fix for "the agent stalls after 1-2 tool calls" is to restate the rules at the *end* of the
++prompt: a long turn pushes a prefix-only instruction out of the model's attention, and the last thing it reads
++before answering is what it follows.
++"""
++from app.config import settings
++from app.utils.tools import TOOL_LOOP_REMINDER, build_tool_prompt
++
++_TOOL = [{"type": "function", "function": {"name": "run", "description": "runs",
++                                           "parameters": {"type": "object"}}}]
++
++
++def test_reminder_is_appended_at_the_very_end():
++    prompt = build_tool_prompt("Human: do the thing", _TOOL)
++    assert TOOL_LOOP_REMINDER in prompt
++    assert prompt.endswith(TOOL_LOOP_REMINDER), "the reminder must be the last thing the model reads"
++    assert prompt.index("User message:") < prompt.index(TOOL_LOOP_REMINDER)
++
++
++def test_reminder_forbids_promises_and_demands_a_tool_call():
++    prompt = build_tool_prompt("Human: do the thing", _TOOL)
++    low = prompt.lower()
++    assert "tool_call" in low
++    assert "promise" in low and "progress report" in low
++
++
++def test_reminder_is_inert_without_tools():
++    assert build_tool_prompt("Human: hi", []) == "Human: hi"
++
++
++def test_reminder_respects_tool_choice_none():
++    """"none" means the caller explicitly wants text only — a tool reminder would contradict it."""
++    prompt = build_tool_prompt("Human: hi", _TOOL, tool_choice="none")
++    assert TOOL_LOOP_REMINDER not in prompt
++    assert "Do NOT use any tools" in prompt
++
++
++def test_reminder_can_be_disabled_by_setting(monkeypatch):
++    monkeypatch.setattr(settings, "tool_loop_reminder", False)
++    prompt = build_tool_prompt("Human: hi", _TOOL)
++    assert TOOL_LOOP_REMINDER not in prompt
