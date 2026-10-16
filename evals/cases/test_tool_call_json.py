@@ -203,8 +203,19 @@ def test_truncated_tool_json_is_regenerated_once_then_degrades(proto: str, strea
     _assert_degraded(run(proto, FLASH, stream, TRUNCATED))
 
 
-def test_unescaped_inner_quotes_degrade_the_same_way():
-    _assert_degraded(run("chat", FLASH, False, INNER_QUOTE))
+def test_complete_unescaped_inner_quotes_are_repaired_once():
+    """A complete argument object is repaired; only truncation remains non-repairable."""
+    r = run("chat", FLASH, False, INNER_QUOTE)
+    assert r["status"] == 200, r
+    assert r["error_class"] == "", r
+    assert r["violations"] == [], r
+    assert r["tool_args_invalid"] is False, r
+    assert len(r["tool_calls"]) == 1, r
+    args = json.loads(r["tool_calls"][0]["arguments"])
+    assert args["content"] == 'say "hi" now\nbye'
+    assert r["content"].strip() == ""
+    assert r["upstream_calls"] == 1, "complete quote repair must not trigger regeneration"
+    assert r["leaked_slots"] == 0, r
 
 
 # chat covers both modes (its stream path regenerates separately); the others share one code path per router
