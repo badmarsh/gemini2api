@@ -597,6 +597,14 @@ def is_malformed_tool_result(parsed) -> bool:
     )
 
 
+def _publish_parse_diagnostics(diagnostics: MutableMapping) -> None:
+    try:
+        from app.core.request_context import set_field
+        set_field("parse_diagnostic", dict(diagnostics))
+    except Exception:
+        pass
+
+
 async def parse_tool_response_with_retry(text: str, regenerate, *, budget=None,
                                          diagnostics: MutableMapping | None = None) -> dict:
     """Parse a tool response and, if necessary, regenerate at most once.
@@ -604,8 +612,10 @@ async def parse_tool_response_with_retry(text: str, regenerate, *, budget=None,
     ``budget`` is shared with ``agent_loop.guard_tool_loop`` by every router. A missing budget keeps the
     standalone helper's historical one-retry behaviour for callers that use it directly.
     """
-    parsed = parse_tool_response(text, diagnostics=diagnostics)
+    local_diagnostics = diagnostics if diagnostics is not None else {}
+    parsed = parse_tool_response(text, diagnostics=local_diagnostics)
     if regenerate is None or not is_malformed_tool_result(parsed):
+        _publish_parse_diagnostics(local_diagnostics)
         return parsed
 
     if budget is None:
@@ -613,6 +623,7 @@ async def parse_tool_response_with_retry(text: str, regenerate, *, budget=None,
         budget = RegenerationBudget()
     if not budget.try_consume("parse_retry"):
         logger.warning("Tool-call retry skipped: the per-turn regeneration budget is exhausted")
+        _publish_parse_diagnostics(local_diagnostics)
         return parsed
 
     logger.warning("Tool-call JSON is malformed; regenerating once (no truncated-JSON repair)")
@@ -620,15 +631,18 @@ async def parse_tool_response_with_retry(text: str, regenerate, *, budget=None,
         retry_text = await regenerate()
     except Exception as e:
         logger.warning(f"Tool-call retry failed; keeping the first degraded result: {type(e).__name__}")
+        _publish_parse_diagnostics(local_diagnostics)
         return parsed
 
     if not isinstance(retry_text, str) or not retry_text.strip():
+        _publish_parse_diagnostics(local_diagnostics)
         return parsed
 
     retried_diagnostics = {}
     retried = parse_tool_response(retry_text, diagnostics=retried_diagnostics)
     if diagnostics is not None:
         diagnostics["retry"] = retried_diagnostics
+    _publish_parse_diagnostics(retried_diagnostics if not is_malformed_tool_result(retried) else (diagnostics or retried_diagnostics))
     if is_malformed_tool_result(retried):
         logger.warning("Tool-call retry is still malformed; no further retry")
         return parsed

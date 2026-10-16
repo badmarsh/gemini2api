@@ -25,6 +25,20 @@ class LogRecord:
     stream: Optional[bool] = None
     error: Optional[str] = None
     tags: list = field(default_factory=list)
+    ttft_ms: Optional[float] = None
+    total_latency_ms: Optional[float] = None
+    max_inter_chunk_gap_ms: Optional[float] = None
+    error_class: Optional[str] = None
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None
+    regenerations: int = 0
+    account_hash: Optional[str] = None
+    served_by: Optional[str] = None
+    finish_reason: Optional[str] = None
+    parser_failure: Optional[str] = None
+    parser_response_length: Optional[int] = None
+    parser_repaired: bool = False
+    truncated_suspected: bool = False
     request: Optional[dict] = None
     response: Optional[dict] = None
 
@@ -41,6 +55,10 @@ class LogRecord:
             self.method,
             self.model or "",
             self.error or "",
+            self.error_class or "",
+            self.fallback_reason or "",
+            self.served_by or "",
+            self.parser_failure or "",
             str(self.status) if self.status else "",
         ]
         return any(q in s.lower() for s in searchable)
@@ -174,6 +192,20 @@ def create_log_record(
     error: Optional[str] = None,
     request_body: Optional[dict] = None,
     response_body: Optional[dict] = None,
+    ttft_ms: Optional[float] = None,
+    total_latency_ms: Optional[float] = None,
+    max_inter_chunk_gap_ms: Optional[float] = None,
+    error_class: Optional[str] = None,
+    fallback_used: bool = False,
+    fallback_reason: Optional[str] = None,
+    regenerations: int = 0,
+    account_hash: Optional[str] = None,
+    served_by: Optional[str] = None,
+    finish_reason: Optional[str] = None,
+    parser_failure: Optional[str] = None,
+    parser_response_length: Optional[int] = None,
+    parser_repaired: bool = False,
+    truncated_suspected: bool = False,
 ) -> LogRecord:
     now = datetime.now(timezone.utc).isoformat()
     return LogRecord(
@@ -189,6 +221,20 @@ def create_log_record(
         latency_ms=round(latency_ms, 1) if latency_ms is not None else None,
         stream=stream,
         error=error,
+        ttft_ms=round(ttft_ms, 1) if ttft_ms is not None else None,
+        total_latency_ms=round(total_latency_ms, 1) if total_latency_ms is not None else None,
+        max_inter_chunk_gap_ms=round(max_inter_chunk_gap_ms, 1) if max_inter_chunk_gap_ms is not None else None,
+        error_class=error_class,
+        fallback_used=bool(fallback_used),
+        fallback_reason=fallback_reason,
+        regenerations=int(regenerations or 0),
+        account_hash=account_hash,
+        served_by=served_by,
+        finish_reason=finish_reason,
+        parser_failure=parser_failure,
+        parser_response_length=int(parser_response_length) if parser_response_length is not None else None,
+        parser_repaired=bool(parser_repaired),
+        truncated_suspected=bool(truncated_suspected),
         request=request_body,
         response=response_body,
     )

@@ -20,6 +20,8 @@ from app.core.fingerprint.version_sync import version_sync_loop
 from app.core.usage_stats import UsageStatsStore
 from app.core.usage_timer import snapshot_loop
 from app.core.log_store import LogStore, create_log_record
+from app.core.debug_metrics import metrics as debug_metrics
+from app.core.request_context import bind as bind_request_context, reset as reset_request_context
 from app.routers import openai, claude, gemini, research
 from app.routers import responses as responses_router
 from app.routers import admin
@@ -372,19 +374,139 @@ async def _capture_response_body(response):
     return rebuilt, body_dict
 
 
+def _debug_error_class(request: Request, status: int, raw: bytes = b"") -> str:
+    explicit = getattr(request.state, "debug_error_class", "")
+    if explicit:
+        return explicit
+    diagnostic = getattr(request.state, "parse_diagnostic", {}) or {}
+    if diagnostic.get("repaired"):
+        return "tool_json_repaired"
+    if diagnostic.get("failure_class"):
+        return "tool_json_invalid"
+    if status == 504:
+        return "upstream_timeout"
+    if status in (401, 403):
+        return "cookie_invalid" if status == 403 else "auth_error"
+    if status == 429:
+        return "rate_limit"
+    if status >= 500:
+        return "upstream_error"
+    if raw and b'"error"' in raw:
+        return "upstream_error"
+    return ""
+
+
+def _debug_fallback(response, raw: bytes = b"") -> tuple[bool, str, str]:
+    headers = getattr(response, "headers", {})
+    served_by = (headers.get("X-Gemini2API-Argon-Served-By") or "").strip()
+    reason = (headers.get("X-Gemini2API-Argon-Fallback-Reason") or "").strip()
+    marker = b"gemini2api argon_fallback served_by="
+    if marker in raw:
+        fallback_used = True
+        try:
+            tail = raw.split(marker, 1)[1].splitlines()[0].decode("utf-8", "replace")
+            served_by = tail.split("served_by=", 1)[-1].split(" ", 1)[0]
+            reason = tail.split("reason=", 1)[-1].split()[0] if "reason=" in tail else reason
+        except Exception:
+            pass
+    else:
+        if served_by in {"stall_breaker", "argon_always_fallback"}:
+            fallback_used = True
+            reason = reason or served_by
+            served_by = "gemini-flash-thinking"
+        else:
+            fallback_used = bool(served_by and served_by != "argon" and "or-" not in served_by)
+            if served_by == "argon-or-gemini-flash-thinking":
+                served_by = "argon"
+    return fallback_used, reason, served_by or "argon"
+
+
+def _add_debug_log(request: Request, response, *, path: str, method: str, model: str | None,
+                   stream: bool | None, status: int, started: float, ttft_ms: float,
+                   max_gap_ms: float, raw: bytes = b"", request_body=None, response_body=None) -> None:
+    import time as _time
+    total_ms = max(0.0, (_time.perf_counter() - started) * 1000)
+    fallback_used, fallback_reason, served_by = _debug_fallback(response, raw)
+    error_class = _debug_error_class(request, status, raw)
+    account_hash = getattr(request.state, "account_hash", "") or ""
+    regenerations = int(getattr(request.state, "regenerations", 0) or 0)
+    finish_reason = getattr(request.state, "finish_reason", "") or ""
+    if not finish_reason and raw:
+        import re as _re
+        match = _re.search(rb'"(?:finish_reason|finishReason|stop_reason|stopReason)"\s*:\s*"([^"\\]+)"', raw)
+        if match:
+            finish_reason = match.group(1).decode("utf-8", "replace")[:64]
+    parse_diagnostic = getattr(request.state, "parse_diagnostic", {}) or {}
+    parser_failure = str(parse_diagnostic.get("failure_class") or "")
+    parser_response_length = parse_diagnostic.get("response_length")
+    parser_repaired = bool(parse_diagnostic.get("repaired"))
+    truncated_suspected = bool(parse_diagnostic.get("truncated_suspected"))
+    record = create_log_record(
+        method=method,
+        path=_scrub_sensitive(path),
+        direction="egress" if path.startswith(("/v1beta/", "/gemini/")) else "ingress",
+        model=model,
+        status=status,
+        latency_ms=total_ms,
+        stream=stream,
+        error=(f"HTTP {status}" if status >= 400 else None),
+        request_body=request_body,
+        response_body=response_body,
+        ttft_ms=ttft_ms,
+        total_latency_ms=total_ms,
+        max_inter_chunk_gap_ms=max_gap_ms,
+        error_class=error_class or None,
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason or None,
+        regenerations=regenerations,
+        account_hash=account_hash or None,
+        served_by=served_by,
+        finish_reason=finish_reason or None,
+        parser_failure=parser_failure or None,
+        parser_response_length=parser_response_length,
+        parser_repaired=parser_repaired,
+        truncated_suspected=truncated_suspected,
+    )
+    debug = {
+        "request_id": record.request_id,
+        "ts": record.ts,
+        "model": model or "",
+        "served_by": served_by,
+        "account_hash": account_hash,
+        "status": status,
+        "ttft_ms": ttft_ms,
+        "total_latency_ms": total_ms,
+        "max_inter_chunk_gap_ms": max_gap_ms,
+        "error_class": error_class,
+        "fallback_used": fallback_used,
+        "fallback_reason": fallback_reason,
+        "regenerations": regenerations,
+        "finish_reason": finish_reason,
+        "parser_failure": parser_failure,
+        "parser_response_length": parser_response_length,
+        "parser_repaired": parser_repaired,
+        "truncated_suspected": truncated_suspected,
+    }
+    debug_metrics.record(debug)
+    request.app.state.log_store.add(record)
+
+
 @app.middleware("http")
 async def log_capture_middleware(request: Request, call_next):
     path = request.url.path
     if any(path.startswith(p) for p in SKIP_LOG_PREFIXES):
         return await call_next(request)
 
-    is_api = path.startswith(("/openai/", "/claude/", "/gemini/", "/v1/", "/v1beta/"))
+    context_token = bind_request_context(request.state)
+    context_reset = False
 
-    # 提前读取 JSON 请求体并缓存，让下方日志可记录 model/stream（修复 #34）。
-    # 此前 _body_cache 从未被赋值，model/stream 恒为 None，日志缺失关键字段。
-    # Starlette 的 Request.body() 会把结果缓存进 request._body，下游 Pydantic 解析
-    # 复用同一份字节，不会二次读取已耗尽的流，因此对正常请求零影响。
-    # 仅对会话类 API 的 JSON POST 这么做，避免对上传/流式/GET 增加开销。
+    def reset_context() -> None:
+        nonlocal context_reset
+        if not context_reset:
+            reset_request_context(context_token)
+            context_reset = True
+
+    is_api = path.startswith(("/openai/", "/claude/", "/gemini/", "/v1/", "/v1beta/"))
     if (
         is_api
         and request.method == "POST"
@@ -397,70 +519,103 @@ async def log_capture_middleware(request: Request, call_next):
 
     import time
     start = time.perf_counter()
-    response = await call_next(request)
-    latency_ms = (time.perf_counter() - start) * 1000
+    try:
+        response = await call_next(request)
+        latency_ms = (time.perf_counter() - start) * 1000
+        method = request.method
+        status = response.status_code
 
-    method = request.method
-    status = response.status_code
+        if not is_api and not path.startswith("/admin/"):
+            reset_context()
+            return response
 
-    if not is_api and not path.startswith("/admin/"):
+        model = None
+        stream = None
+        if hasattr(request.state, "_body_cache"):
+            import json
+            try:
+                body = json.loads(request.state._body_cache)
+                if isinstance(body, dict):
+                    model = body.get("model")
+                    stream = body.get("stream")
+            except Exception:
+                pass
+        if not model and "/models/" in path:
+            try:
+                model = path.split("/models/", 1)[-1].split(":")[0] or None
+            except Exception:
+                pass
+
+        is_streaming = _looks_like_streaming(response, path, stream)
+        request_body = None
+        response_body = None
+        if settings.log_bodies_enabled and is_api:
+            try:
+                request_body = _body_for_log(getattr(request.state, "_body_cache", None))
+                if is_streaming:
+                    response_body = dict(_STREAMING_NOT_CAPTURED)
+                else:
+                    response, response_body = await _capture_response_body(response)
+            except Exception as e:
+                logger.warning(f"[log_bodies] 记录请求/响应体失败，已跳过: {e}")
+
+        if is_streaming and getattr(response, "body_iterator", None) is not None:
+            original = response.body_iterator
+
+            async def observed_body():
+                first_at = None
+                previous_at = None
+                max_gap = 0.0
+                sample = bytearray()
+                try:
+                    async for chunk in original:
+                        now = time.perf_counter()
+                        if first_at is None:
+                            first_at = now
+                        if previous_at is not None:
+                            max_gap = max(max_gap, (now - previous_at) * 1000)
+                        previous_at = now
+                        if len(sample) < 65536:
+                            sample.extend(bytes(chunk)[:65536 - len(sample)])
+                        yield chunk
+                finally:
+                    try:
+                        _add_debug_log(
+                            request, response, path=path, method=method, model=model, stream=True,
+                            status=status, started=start,
+                            ttft_ms=((first_at - start) * 1000 if first_at is not None else latency_ms),
+                            max_gap_ms=max_gap, raw=bytes(sample), request_body=request_body,
+                            response_body=response_body,
+                        )
+                    except Exception as exc:
+                        logger.warning("[debug_metrics] stream observation failed: %s", type(exc).__name__)
+                    finally:
+                        reset_context()
+
+            response.body_iterator = observed_body()
+            return response
+
+        raw = b""
+        if getattr(response, "body", None):
+            try:
+                raw = bytes(response.body)
+            except Exception:
+                raw = b""
+        try:
+            _add_debug_log(
+                request, response, path=path, method=method, model=model, stream=stream,
+                status=status, started=start, ttft_ms=latency_ms, max_gap_ms=0.0, raw=raw,
+                request_body=request_body, response_body=response_body,
+            )
+        except Exception as exc:
+            logger.warning("[debug_metrics] request observation failed: %s", type(exc).__name__)
+        finally:
+            reset_context()
         return response
+    except BaseException:
+        reset_context()
+        raise
 
-    direction = "egress" if path.startswith(("/v1beta/", "/gemini/")) else "ingress"
-
-    model = None
-    stream = None
-    if hasattr(request.state, "_body_cache"):
-        import json
-        try:
-            body = json.loads(request.state._body_cache)
-            if isinstance(body, dict):
-                model = body.get("model")
-                stream = body.get("stream")
-        except Exception:
-            pass
-    if not model and "/models/" in path:
-        try:
-            model_part = path.split("/models/", 1)[-1].split(":")[0]
-            if model_part:
-                model = model_part
-        except Exception:
-            pass
-
-    error_msg = None
-    if status >= 400:
-        error_msg = f"HTTP {status}"
-
-    # 完整 body 记录（默认关；关闭时下面两个变量恒为 None，记录与开关引入前完全一致）
-    request_body = None
-    response_body = None
-    if settings.log_bodies_enabled and is_api:
-        try:
-            request_body = _body_for_log(getattr(request.state, "_body_cache", None))
-            if _looks_like_streaming(response, path, stream):
-                response_body = dict(_STREAMING_NOT_CAPTURED)
-            else:
-                response, response_body = await _capture_response_body(response)
-        except Exception as e:
-            # body 记录是排障辅助功能，任何异常都不得影响这次请求本身
-            logger.warning(f"[log_bodies] 记录请求/响应体失败，已跳过: {e}")
-
-    log_store = request.app.state.log_store
-    record = create_log_record(
-        method=method,
-        path=_scrub_sensitive(path),
-        direction=direction,
-        model=model,
-        status=status,
-        latency_ms=latency_ms,
-        stream=stream,
-        error=error_msg,
-        request_body=request_body,
-        response_body=response_body,
-    )
-    log_store.add(record)
-
-    return response
 
 app.include_router(openai.router, prefix="/openai/v1")
 app.include_router(openai.router, prefix="/v1")  # 标准 OpenAI 路径，兼容 OpenClaw 等客户端

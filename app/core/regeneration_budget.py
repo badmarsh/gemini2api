@@ -37,6 +37,13 @@ class RegenerationBudget:
         else:
             self.blocked += 1
         self.last_reason = reason
+        try:
+            from app.core.request_context import current
+            state = current()
+            if state is not None:
+                state.regenerations = int(getattr(state, "regenerations", 0)) + (1 if allowed else 0)
+        except Exception:
+            pass
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with _lock:
             if allowed:

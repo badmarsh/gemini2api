@@ -16,6 +16,7 @@ from app.core.fallback import is_empty_result
 from app.core import argon_breaker
 from app.config import settings
 from app.core.usage_metrics import live_metrics
+from app.core.request_context import set_account
 from app.utils.atomic_io import atomic_write_text
 
 logger = logging.getLogger(__name__)
@@ -859,6 +860,7 @@ class AccountPool:
                         f"Pinned gem account '{account_id}' unavailable (expired/busy/cooldown)"
                     )
                 raise
+            set_account(account.id)
             t0 = time.time()
             released = False
             try:
@@ -926,6 +928,7 @@ class AccountPool:
                         f"Pinned gem account '{account_id}' unavailable (expired/busy/cooldown)"
                     )
                 raise
+            set_account(account.id)
             t0 = time.time()
             emitted_any = False
             failover = False
