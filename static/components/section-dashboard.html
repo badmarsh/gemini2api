@@ -1,4 +1,4 @@
-<link rel="stylesheet" href="components/section-dashboard.css?v=4">
+<link rel="stylesheet" href="components/section-dashboard.css?v=5">
 <!-- Dashboard Section -->
 <section id="dashboard" class="section active" aria-labelledby="dashboard-title">
     <h2 id="dashboard-title" data-i18n="dashboard.title">System Overview</h2>
@@ -61,6 +61,37 @@
             </div>
         </div>
     </div>
+
+    <!-- Redacted request diagnostics -->
+    <section class="debug-metrics-panel" aria-labelledby="debug-metrics-title">
+        <div class="system-info-header">
+            <h3 id="debug-metrics-title"><i class="fas fa-heartbeat"></i> <span data-i18n="dashboard.debugMetrics">Request Diagnostics</span></h3>
+            <button id="debugMetricsRefreshBtn" class="btn btn-outline btn-sm" data-i18n-title="dashboard.debugRefresh" title="Refresh diagnostics">
+                <i class="fas fa-sync-alt"></i> <span data-i18n="dashboard.debugRefresh">Refresh</span>
+            </button>
+        </div>
+        <p class="debug-metrics-privacy" data-i18n="dashboard.debugPrivacy">Bounded, redacted metrics only; account IDs and request bodies are never shown.</p>
+        <div class="debug-metrics-grid">
+            <div class="debug-metric-card"><span data-i18n="dashboard.debugRequests">Requests observed</span><strong id="debug-metric-requests">0</strong></div>
+            <div class="debug-metric-card"><span data-i18n="dashboard.debugFallbacks">Fallbacks</span><strong id="debug-metric-fallbacks">0</strong></div>
+            <div class="debug-metric-card"><span data-i18n="dashboard.debugErrors">Error classes</span><strong id="debug-metric-errors">0</strong></div>
+            <div class="debug-metric-card"><span data-i18n="dashboard.debugRegenerations">Regenerations</span><strong id="debug-metric-regenerations">0</strong></div>
+        </div>
+        <div class="debug-metrics-columns">
+            <div>
+                <h4 data-i18n="dashboard.debugTTFT">Time to first byte</h4>
+                <div id="debug-ttft-histogram" class="debug-histogram" role="list"></div>
+            </div>
+            <div>
+                <h4 data-i18n="dashboard.debugServedBy">Served by</h4>
+                <ul id="debug-served-by" class="debug-breakdown" aria-live="polite"></ul>
+            </div>
+            <div>
+                <h4 data-i18n="dashboard.debugErrorClasses">Error classes</h4>
+                <ul id="debug-error-classes" class="debug-breakdown" aria-live="polite"></ul>
+            </div>
+        </div>
+    </section>
 
     <!-- System Information Panel -->
     <div class="system-info-panel">

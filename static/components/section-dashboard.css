@@ -401,6 +401,119 @@
     line-height: 1.4;
 }
 
+/* Redacted request diagnostics */
+.debug-metrics-panel {
+    background: var(--bg-primary);
+    padding: 1.5rem;
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow-md);
+    margin-bottom: 1.5rem;
+}
+
+.debug-metrics-privacy {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin: -0.75rem 0 1rem;
+}
+
+.debug-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.debug-metric-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.debug-metric-card strong {
+    color: var(--text-primary);
+    font-size: 1.25rem;
+}
+
+.debug-metrics-columns {
+    display: grid;
+    grid-template-columns: 1.35fr 1fr 1fr;
+    gap: 1.25rem;
+    margin-top: 1.25rem;
+}
+
+.debug-metrics-columns h4 {
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    margin: 0 0 0.65rem;
+}
+
+.debug-histogram,
+.debug-breakdown {
+    min-height: 108px;
+    margin: 0;
+    padding: 0;
+}
+
+.debug-histogram {
+    display: flex;
+    align-items: end;
+    gap: 0.35rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.debug-histogram-item {
+    flex: 1;
+    min-width: 2rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: end;
+    align-items: center;
+    gap: 0.25rem;
+    height: 108px;
+    color: var(--text-tertiary);
+    font-size: 0.65rem;
+    text-align: center;
+}
+
+.debug-histogram-bar {
+    width: 100%;
+    min-height: 2px;
+    border-radius: 4px 4px 0 0;
+    background: var(--primary-color);
+}
+
+.debug-breakdown {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    overflow: auto;
+    max-height: 108px;
+}
+
+.debug-breakdown li {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+
+.debug-breakdown strong {
+    color: var(--text-primary);
+}
+
+@media (max-width: 850px) {
+    .debug-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .debug-metrics-columns { grid-template-columns: 1fr; }
+}
+
 /* Responsive */
 @media (max-width: 1024px) {
     .info-grid {

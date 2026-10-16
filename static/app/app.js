@@ -230,6 +230,7 @@ async function loadDashboard(opts) {
             renderAccountStatusGrid(accounts);
             renderModelsList(modelsSet);
             updatePlaygroundModels(modelsSet);
+            if (typeof renderDebugMetrics === 'function') renderDebugMetrics(data.debug_metrics);
         }
         if (view.sys) applySystemInfo(view.sys);
         await qrPromise;
@@ -240,6 +241,11 @@ async function loadDashboard(opts) {
             updateBtn._bound = true;
             updateBtn.addEventListener('click', handleCheckUpdate);
             checkForUpdate();
+        }
+        const debugRefresh = document.getElementById('debugMetricsRefreshBtn');
+        if (debugRefresh && !debugRefresh._bound) {
+            debugRefresh._bound = true;
+            debugRefresh.addEventListener('click', () => loadDashboard({ background: true }));
         }
     } finally {
         _dashboardLoading = false;
@@ -506,6 +512,43 @@ function updatePlaygroundModels(modelsSet) {
     select.innerHTML = models.map(model =>
         `<option value="${escapeAttr(model)}">${escapeHtml(model)}</option>`
     ).join('');
+}
+
+function renderDebugMetrics(summary) {
+    const data = summary && typeof summary === 'object' ? summary : {};
+    setText('debug-metric-requests', Number(data.record_count) || 0);
+    setText('debug-metric-fallbacks', Number(data.fallback_count) || 0);
+    setText('debug-metric-errors', Object.keys(data.error_classes || {}).filter(k => k !== 'ok').length);
+    setText('debug-metric-regenerations', Number(data.regenerations) || 0);
+
+    const histogram = document.getElementById('debug-ttft-histogram');
+    const buckets = data.ttft_histogram_ms && typeof data.ttft_histogram_ms === 'object'
+        ? Object.entries(data.ttft_histogram_ms) : [];
+    if (histogram) {
+        const max = Math.max(...buckets.map(([, value]) => Number(value) || 0), 1);
+        histogram.innerHTML = buckets.length
+            ? buckets.map(([label, value]) => {
+                const count = Number(value) || 0;
+                const height = Math.max(2, Math.round((count / max) * 100));
+                return `<div class="debug-histogram-item" role="listitem" title="${escapeAttr(String(count))}">
+                    <span>${escapeHtml(String(count))}</span>
+                    <span class="debug-histogram-bar" style="height:${height}%"></span>
+                    <span>${escapeHtml(label)}</span>
+                </div>`;
+            }).join('')
+            : `<span class="text-muted">${escapeHtml(t('dashboard.debugNoData'))}</span>`;
+    }
+
+    const renderBreakdown = (id, values) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const entries = values && typeof values === 'object' ? Object.entries(values) : [];
+        el.innerHTML = entries.length
+            ? entries.map(([label, value]) => `<li><span>${escapeHtml(String(label))}</span><strong>${escapeHtml(String(Number(value) || 0))}</strong></li>`).join('')
+            : `<li class="text-muted">${escapeHtml(t('dashboard.debugNoData'))}</li>`;
+    };
+    renderBreakdown('debug-served-by', data.served_by);
+    renderBreakdown('debug-error-classes', data.error_classes);
 }
 
 // ============================================================================
@@ -912,6 +955,55 @@ function _pgAttachArtifactCards(container, content) {
         });
         container.appendChild(card);
     });
+}
+
+async function validatePlaygroundToolJson() {
+    const input = document.getElementById('pg-tool-json');
+    const result = document.getElementById('pg-tool-result');
+    const button = document.getElementById('pg-tool-validate');
+    if (!input || !result || !button) return;
+    const text = input.value.trim();
+    if (!text) {
+        result.className = 'pg-tool-result is-invalid';
+        result.textContent = t('playground.toolJsonEmpty');
+        return;
+    }
+    button.disabled = true;
+    result.className = 'pg-tool-result';
+    result.textContent = t('playground.toolChecking');
+    try {
+        const data = await telemetryService.validateToolJson(text);
+        const length = Number(data.response_length) || text.length;
+        if (data.valid) {
+            const repair = data.repaired ? ` ${t('playground.toolRepaired')}` : '';
+            result.className = 'pg-tool-result is-valid';
+            result.textContent = `${t('playground.toolValid')} (${data.tool_call_count || 0} ${t('playground.toolCalls')}, ${length} ${t('playground.toolChars')})${repair}`;
+        } else {
+            const suffix = data.truncated_suspected ? ` ${t('playground.toolTruncated')}` : '';
+            result.className = 'pg-tool-result is-invalid';
+            result.textContent = `${t('playground.toolInvalid')}: ${data.failure_class || 'json_syntax'} (${length} ${t('playground.toolChars')})${suffix}`;
+        }
+    } catch (error) {
+        result.className = 'pg-tool-result is-invalid';
+        result.textContent = `${t('playground.toolCheckFailed')}: ${error.message || ''}`;
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function initPlaygroundToolTest() {
+    const toggle = document.getElementById('pg-tool-test');
+    const input = document.getElementById('pg-tool-json');
+    const button = document.getElementById('pg-tool-validate');
+    if (!toggle || !input || !button || button._bound) return;
+    const sync = () => {
+        input.disabled = !toggle.checked;
+        button.disabled = !toggle.checked;
+    };
+    toggle.addEventListener('change', sync);
+    button.addEventListener('click', validatePlaygroundToolJson);
+    button._bound = true;
+    sync();
 }
 
 let _pgAbortController = null;
@@ -1413,6 +1505,7 @@ function initEventListeners() {
     if (pgSend) {
         pgSend.addEventListener('click', sendPlaygroundRequest);
     }
+    initPlaygroundToolTest();
 
     // Playground textarea: Enter to send, Shift+Enter for newline
     const pgMessage = document.getElementById('pg-message');
