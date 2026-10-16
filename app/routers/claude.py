@@ -96,7 +96,16 @@ async def create_message(req: ClaudeRequest, request: Request):
             gem_account_id = gem_info.get("account_id") or None
             resolved_model = gem_info.get("base_model") or "gemini-pro"
 
+    # Same condition as in openai.py: judged on the *requested* model, so the prompt still applies when the
+    # request is served by the Flash fallback (always-fallback / stall breaker).
+    wants_argon = "argon" in req.model.lower() or "argon" in resolved_model.lower()
     resolved_model, is_argon, force_thinking = argon_fallback.plan(req.model, resolved_model)
+
+    # ARGON_SYSTEM_PROMPT: only when the caller sent no system prompt. Built before build_tool_prompt below,
+    # which wraps the whole prompt.
+    _argon_sys = (getattr(settings, "argon_system_prompt", "") or "").strip()
+    if wants_argon and _argon_sys and not req.system:
+        prompt = build_prompt_from_messages(messages_raw, system=_argon_sys)
 
     has_tools = bool(req.tools)
     # 生图意图优先：带 tools 但明确生图意图时跳过工具模拟，直接生图（否则生图被压制）。

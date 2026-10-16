@@ -286,6 +286,16 @@ async def chat_completions(req: ChatRequest, request: Request):
         if conv and conv.gemini_conv_id:
             gemini_conv_id = conv.gemini_conv_id
 
+    # ARGON_SYSTEM_PROMPT: prepend to a *new* Argon conversation when the caller sent no system message.
+    # Must happen before the prompt is flattened and before build_tool_prompt wraps it, otherwise the tool
+    # prompt is lost. A continuing conversation (gemini_conv_id) sends only the last user message: the
+    # upstream chat already holds the system prompt from its first turn.
+    _argon_sys = (getattr(settings, "argon_system_prompt", "") or "").strip()
+    if (_argon_sys and not gemini_conv_id
+            and ("argon" in req.model.lower() or "argon" in resolved_model.lower())
+            and not any(m.get("role") in ("system", "developer") for m in messages_raw)):
+        messages_raw = [{"role": "system", "content": _argon_sys}] + messages_raw
+
     # 如果有有效的 gemini_conv_id，只发最新一条用户消息（服务端会话继续）
     # 当客户端未传 conversation_id 时（如 OpenAI SDK / Codex / 编程 Agent），gemini_conv_id 为空，保留完整多轮上下文
     if gemini_conv_id and messages_raw:

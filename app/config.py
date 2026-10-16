@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     # After an Argon stall (timeout), serve Argon requests from the Flash fallback for this many seconds instead
     # of letting each one wait out the same timeout. 0 disables. Only active when argon_fallback_to_flash=true.
     argon_stall_breaker_seconds: int = 180
+    # Optional system prompt prepended to every Argon request (before any user/tool content).
+    # Set via ARGON_SYSTEM_PROMPT env var. Empty string = disabled. Supports multiline via \n escapes.
+    argon_system_prompt: str = ""
 
     @field_validator("gemini_psid")
     @classmethod
