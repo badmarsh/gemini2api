@@ -17,6 +17,12 @@ All notable changes to this project will be documented in this file. The format 
   carries at `inner[59]`; the `x-goog-ext-525005358-jspb` header must echo that same UUID. The Argon rewrite
   discarded the returned value and minted a second, unrelated UUID for the header (upstream paired them).
   Both call sites use the encoder's UUID again, with a regression test per call site.
+- An answer with no text, no images and no reasoning is no longer returned as a silent HTTP 200 with empty
+  content once every fallback is exhausted (for example with `ARGON_FALLBACK_TO_FLASH=false`):
+  `/v1/chat/completions` (stream and non-stream) and `/v1/responses` answer `502` (or an error event /
+  `response.failed`) with a retryable message, so clients can retry instead of treating an empty reply as success.
+- Native `streamGenerateContent` with tools now emits `functionCall` parts, like `generateContent`, instead of
+  streaming the raw `{"status":"tool_use",...}` envelope as text.
 - Order of operations for `ARGON_SYSTEM_PROMPT` / tool-loop work: see the entries below (merge mode,
   `TOOL_LOOP_REMINDER`, stall guard, single Argon->Flash implementation, visible substitutions).
 - `.env` robustness on Windows: a UTF-8 BOM at the start of the file (added by Notepad or PowerShell 5.1) no longer breaks the first key, and unknown keys (for example those used by the refresher, which shares the file) no longer crash startup. Startup logs one warning listing the unknown key names (never values) so typos are still noticed.

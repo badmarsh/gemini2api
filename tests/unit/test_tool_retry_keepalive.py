@@ -132,9 +132,11 @@ def test_gemini_ndjson_tool_valid_first_time_emits_no_extra_keepalive(gem_client
 
     assert calls["n"] == 1, "首次合法不得重试"
     assert ": ping" not in body
-    streamed = "".join(
-        p.get("text", "")
+    parts = [
+        p
         for line in body.splitlines() if line.strip()
         for p in json.loads(line)["candidates"][0]["content"]["parts"]
-    )
-    assert streamed == VALID
+    ]
+    # a functionCall part (like generateContent), not the raw tool_use envelope as text
+    assert [p["functionCall"] for p in parts if "functionCall" in p] == [{"name": "run_shell", "args": {"cmd": "ls"}}]
+    assert "".join(p.get("text", "") for p in parts) == ""

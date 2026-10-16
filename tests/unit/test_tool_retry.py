@@ -309,7 +309,7 @@ def test_gemini_stream_retries_malformed_tool_json(gem_client, monkeypatch):
     assert "alpha_expre" not in r.text
 
 
-def test_gemini_stream_valid_first_time_streams_original_text_unchanged(gem_client, monkeypatch):
+def test_gemini_stream_valid_first_time_emits_function_call_without_retry(gem_client, monkeypatch):
     """零回归：首次即合法时不重试，流回的文本与修复前逐字节一致（原始模型文本）。"""
     import app.routers.gemini as gm
     counter = {"n": 0}
@@ -322,12 +322,14 @@ def test_gemini_stream_valid_first_time_streams_original_text_unchanged(gem_clie
 
     assert r.status_code == 200
     assert counter["n"] == 1
-    streamed = "".join(
-        p.get("text", "")
+    parts = [
+        p
         for line in r.text.splitlines() if line.strip()
         for p in json.loads(line)["candidates"][0]["content"]["parts"]
-    )
-    assert streamed == VALID
+    ]
+    # the client gets a functionCall part (like generateContent), not the raw {"status":"tool_use",...} envelope
+    assert [p["functionCall"] for p in parts if "functionCall" in p] == [{"name": "run_shell", "args": {"cmd": "ls"}}]
+    assert "".join(p.get("text", "") for p in parts) == ""
 
 
 # --- responses.py:55 (非流式 + 流式，同一处调用点) ---------------------------

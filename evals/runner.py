@@ -130,6 +130,23 @@ def classify(rec: dict) -> str:
     return ""
 
 
+def is_silent_empty(rec: dict) -> bool:
+    """HTTP 200 whose answer is completely empty and carries no error signal.
+
+    The client cannot tell it from a real reply. Note ``classify`` labels such a record ``"empty_result"``, so an
+    assertion written as ``error_class == "" and not content`` can never be true: use this predicate instead.
+    """
+    return bool(
+        rec.get("status") == 200
+        and not rec.get("transport_error")
+        and not rec.get("stream_error")
+        and not rec.get("disconnected_by_client")
+        and not (rec.get("content") or "").strip()
+        and not rec.get("tool_calls")
+        and not (rec.get("thoughts") or "").strip()
+    )
+
+
 async def run_request(client: httpx.AsyncClient, spec: RequestSpec) -> dict:
     proto = protocol_of(spec.endpoint)
     rec: dict = {
