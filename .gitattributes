@@ -1,0 +1,6 @@
+# Repo is bind-mounted into a Linux container and shipped via Docker: keep text files LF in the index
+# and in the working tree regardless of core.autocrlf on the Windows host.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
