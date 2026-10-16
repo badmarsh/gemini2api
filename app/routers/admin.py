@@ -11,9 +11,10 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.config import APP_VERSION, mask_secret
+from app.config import APP_VERSION, mask_secret, settings
 from app.core.account_pool import account_pool, AccountStatus
-from app.core.gemini_client import GeminiWebClient
+from app.core import agent_loop, argon_breaker
+from app.core.gemini_client import GeminiWebClient, count_argon_salvaged_results
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -96,7 +97,27 @@ async def reload_cookies(req: ReloadCookiesRequest = None):
 
 @router.get("/status")
 async def admin_status():
-    return _masked_status()
+    """Account pool + the Argon/agent-loop state an operator needs to explain "it got slow" or "it answered
+    nothing": which model Argon requests will be served by right now, how often the loop needed rescuing, and
+    how many Argon replies came back with frames but no answer at all."""
+    status = _masked_status()
+    status["argon"] = argon_breaker.snapshot()
+    status["agent_loop"] = agent_loop.stats()
+    status["agent_loop"]["tool_loop_reminder"] = bool(getattr(settings, "tool_loop_reminder", True))
+    status["agent_loop"]["stall_guard"] = bool(getattr(settings, "tool_loop_stall_guard", True))
+    status["agent_loop"]["salvaged_empty_streams"] = count_argon_salvaged_results()
+    status["agent_loop"]["fallback_model"] = settings.argon_fallback_model
+    return status
+
+
+@router.post("/argon/reset")
+async def reset_argon_breaker():
+    """Close the Argon stall breaker by hand (e.g. right after a Google-side incident is over) so Argon is
+    probed again on the next request instead of waiting out ARGON_STALL_BREAKER_SECONDS."""
+    was_open = argon_breaker.is_open()
+    argon_breaker.reset()
+    logger.warning(f"Argon stall breaker manually reset (was_open={was_open})")
+    return {"success": True, "was_open": was_open, "argon": argon_breaker.snapshot()}
 
 
 @router.get("/system-info")

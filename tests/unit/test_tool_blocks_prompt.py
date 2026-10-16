@@ -63,7 +63,13 @@ def test_openai_conversation_continuation_non_str_text_no_500(gem_client, monkey
     build_prompt_from_messages 把整段历史重发一遍。用一段带 None-text 块 + 一段正常 text 块
     的最新消息钉住确切 prompt 值，混入更早的历史消息以证明它没有被重新拼进去。"""
     import app.routers.openai as oai
+    from app.config import settings
     from app.core.conversation_store import Conversation
+
+    # The continuation branch (only the newest user message) is opt-in now: the 81-element StreamGenerate
+    # payload cannot continue a conversation server-side, so the default sends the full history. The branch
+    # must stay correct for the case it is enabled, which is what this test pins.
+    monkeypatch.setattr(settings, "server_side_continuation", True)
 
     fake_conv = Conversation("conv-1", gemini_conv_id="gconv-1")
     captured = {}
@@ -101,7 +107,11 @@ def test_openai_conversation_continuation_image_only_latest_takes_last_user_bran
     （每个图片块贡献一个空字符串，用换行连接多个块），continuation 分支仍应被走通—— 不能
     像加固前那样因误删无 text 块而把结果变假，进而错误落回整段历史重发。"""
     import app.routers.openai as oai
+    from app.config import settings
     from app.core.conversation_store import Conversation
+
+    # Same as above: the continuation branch is opt-in, the hardening inside it must survive.
+    monkeypatch.setattr(settings, "server_side_continuation", True)
 
     fake_conv = Conversation("conv-2", gemini_conv_id="gconv-2")
     captured = {}

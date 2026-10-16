@@ -48,7 +48,8 @@ def test_chat_realstream_no_ping_when_fast(gem_client, monkeypatch):
 def test_openai_still_has_buffered_keepalive():
     """回归：buffered 路径心跳（既有）不受影响。"""
     src = (_ROOT / "app" / "routers" / "openai.py").read_text(encoding="utf-8")
-    assert "_sse_keepalive_during(gen_task)" in src
+    assert "_keepalive_task(gen_task)" in src, "generate task no longer driven through the keepalive helper"
+    assert "_sse_keepalive_during(task)" in src
 
 
 def test_responses_stream_emits_keepalive_ping_during_silence(gem_client, monkeypatch):

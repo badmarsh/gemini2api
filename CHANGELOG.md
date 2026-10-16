@@ -6,6 +6,30 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Fixed
+- **Multi-turn context is no longer lost on stored conversations.** The 81-element StreamGenerate payload
+  cannot continue a conversation the server already holds (`inner[2]` is the metadata block, spec §4.3), yet
+  the router stripped the request down to the newest user message whenever a stored `gemini_conv_id` existed:
+  the client's `conversation_id` was "accepted" and the model answered without any history. The full history
+  is now sent by default; `SERVER_SIDE_CONTINUATION=true` restores last-message-only once the protocol can
+  really carry the id again. The dropped id is reported once in the log (never printed).
+- **Companion UUID pairing restored.** `_encode_payload_thinking` mints the per-request UUID that the payload
+  carries at `inner[59]`; the `x-goog-ext-525005358-jspb` header must echo that same UUID. The Argon rewrite
+  discarded the returned value and minted a second, unrelated UUID for the header (upstream paired them).
+  Both call sites use the encoder's UUID again, with a regression test per call site.
+- Order of operations for `ARGON_SYSTEM_PROMPT` / tool-loop work: see the entries below (merge mode,
+  `TOOL_LOOP_REMINDER`, stall guard, single Argon->Flash implementation, visible substitutions).
+- `.env` robustness on Windows: a UTF-8 BOM at the start of the file (added by Notepad or PowerShell 5.1) no longer breaks the first key, and unknown keys (for example those used by the refresher, which shares the file) no longer crash startup. Startup logs one warning listing the unknown key names (never values) so typos are still noticed.
+- The Gemini-to-third-party fallback toggle (`PATCH /admin/api-keys/fallback`) is now persisted in `data/settings-overrides.json`, like the settings panel fields. Under Docker Compose `env_file` the real environment variable beat the container-local `.env`, so the toggle silently reverted after a restart. The write is all-or-nothing: if any layer fails, memory and files are restored.
+- Text encoding is now explicit everywhere (`utf-8-sig` when reading hand-edited files, `utf-8` when writing), so the app no longer depends on the Windows locale code page. Persistence is hardened against bad files: conversation history is written atomically and loaded file by file, and a corrupt `accounts.json` is moved to `accounts.json.corrupt-<YYYYmmdd-HHMMSS>` before the pool starts empty instead of being silently overwritten.
+- Usage statistics snapshots kept failing on Windows because `Path.rename` raises `FileExistsError` when the target exists; they now use `replace`, so persistence works there.
+- An auto-generated API key is now persisted when `.env` has no exact `API_KEY=` line (for example only `ADMIN_API_KEY=`, an `export` prefix, or an empty value). The file is parsed line by line and "saved" is only logged after the write succeeded.
+- `POST /admin/restart` flushes the log store before signalling and now answers `501` on Windows, where `os.kill(SIGTERM)` is a hard `TerminateProcess` (no graceful shutdown and nothing starts the service again). The web console's Restart button now passes the required `?confirm=true`; before, it always got `400` and silently did nothing.
+- `.env` rewrites (settings panel, fallback toggle, generated API key) are atomic: a temp file next to `.env` is swapped in with `os.replace`, so a crash can no longer leave a truncated file. A read-only `.env` still fails up front with a permission error, the file mode is kept, and a bind-mounted `.env` that cannot be renamed over falls back to a direct write. A newly created `.env` is now private (0600). The parent directory is fsynced after the swap on POSIX (best effort).
+- The web console's Restart button no longer claims "Restarting service..." when the request failed: it shows the real error and does not start the reload/health polling. `GET /admin/system-info` reports `restart_supported`, and the button is hidden where restart is unsupported (Windows).
+
+---
+
 ### Security
 - `/docs`, `/redoc` and `/openapi.json` are now disabled by default (404). FastAPI serves them without checking the API key, and they listed every route including the admin API. Set `DOCS_ENABLED=true` to bring them back; they stay unauthenticated, so use it for local development only.
 - The uvicorn access log no longer prints `?token=` values or `sk-...` keys from the request path; a logging filter scrubs them before the line is formatted.
@@ -19,21 +43,30 @@ All notable changes to this project will be documented in this file. The format 
 - `/v1/messages` and the native Gemini endpoints now also fall back from Argon to Flash (same rules as the OpenAI endpoints, before any content was streamed).
 - An Argon timeout with the Flash fallback on now goes straight to Flash instead of retrying the other Argon account (which doubled the wait to ~2x360 s). `ARGON_FAILOVER_ON_STALL=true` restores the old behaviour.
 - Stall circuit breaker: after an Argon stall, Argon requests are served by Flash for `ARGON_STALL_BREAKER_SECONDS` (default 180) instead of each waiting out the full timeout again. Set it to `0` to disable. Has no effect when `ARGON_FALLBACK_TO_FLASH` is off.
+- `ARGON_SYSTEM_PROMPT` now **merges** in front of the caller's own system/developer prompt by default.
+  Codex, Cline and OpenCode always send theirs, and the old "only when the caller sent nothing" rule silently
+  disabled the Argon rules for exactly those clients (`ARGON_SYSTEM_PROMPT_MODE=only_when_none` restores it).
+- One implementation of the Argon -> Flash rules (`app/core/argon_fallback.py`) replaces the four divergent
+  copies in `openai.py`, `claude.py`, `gemini.py` and `responses.py`; a failed fallback re-raises the original
+  error instead of returning an empty 200 completion.
+- First-chunk wait for Argon streams is 150 s (nothing can be emitted before it); the 240 s silence window
+  **after** content started is deliberately unchanged (rt=c: a shorter window truncates replies).
+- `ARGON_TIMEOUT` makes the Argon request timeout configurable (0 = built-in default).
 
 ### Added
+- **Agent-loop guard for coding harnesses** (`app/core/agent_loop.py`): an end-of-prompt
+  `TOOL_LOOP_REMINDER` ("emit the tool_call now, never a promise") plus detection of a conversational stall
+  and exactly one corrective retry (`TOOL_LOOP_STALL_GUARD`). A promise-only reply is what ends a harness'
+  turn and leaves the agent idle after 1-2 tool calls; the retry keeps the first reply when it fails.
+- **Visible Argon -> Flash substitutions**: `X-Gemini2API-Argon-Served-By` / `-Fallback-Reason` headers on
+  non-streaming responses, a `: gemini2api argon_fallback served_by=...` comment frame in SSE streams (an
+  NDJSON line for the native Gemini stream), and `/admin/status` now reports the breaker state, the guard
+  counters and the number of empty-but-successful Argon streams.
+- `POST /admin/argon/reset` closes the stall breaker by hand instead of waiting out
+  `ARGON_STALL_BREAKER_SECONDS`.
+- Panel: new "Argon & agent loop" group (`ARGON_SYSTEM_PROMPT_MODE`, `ARGON_TIMEOUT`, `TOOL_LOOP_REMINDER`,
+  `TOOL_LOOP_STALL_GUARD`) with labels and hints in all five languages.
 - Dashboard v2: the dashboard now loads `/admin/status` and `/admin/system-info` in parallel (`Promise.allSettled`). If only one of them fails, the other card group still renders and a small notice with a Retry button appears for the failed part; the full-section error screen is kept for the case where both fail. The dashboard also refreshes itself every 30 seconds, but only while it is the active section and the browser tab is visible (a background refresh never replaces the page with an error screen and skips the static QR cards). New i18n keys `dashboard.error.status`, `dashboard.error.system`, `dashboard.retry` in all five languages.
-
-### Fixed
-- `.env` robustness on Windows: a UTF-8 BOM at the start of the file (added by Notepad or PowerShell 5.1) no longer breaks the first key, and unknown keys (for example those used by the refresher, which shares the file) no longer crash startup. Startup logs one warning listing the unknown key names (never values) so typos are still noticed.
-- The Gemini-to-third-party fallback toggle (`PATCH /admin/api-keys/fallback`) is now persisted in `data/settings-overrides.json`, like the settings panel fields. Under Docker Compose `env_file` the real environment variable beat the container-local `.env`, so the toggle silently reverted after a restart. The write is all-or-nothing: if any layer fails, memory and files are restored.
-- Text encoding is now explicit everywhere (`utf-8-sig` when reading hand-edited files, `utf-8` when writing), so the app no longer depends on the Windows locale code page. Persistence is hardened against bad files: conversation history is written atomically and loaded file by file, and a corrupt `accounts.json` is moved to `accounts.json.corrupt-<YYYYmmdd-HHMMSS>` before the pool starts empty instead of being silently overwritten.
-- Usage statistics snapshots kept failing on Windows because `Path.rename` raises `FileExistsError` when the target exists; they now use `replace`, so persistence works there.
-- An auto-generated API key is now persisted when `.env` has no exact `API_KEY=` line (for example only `ADMIN_API_KEY=`, an `export` prefix, or an empty value). The file is parsed line by line and "saved" is only logged after the write succeeded.
-- `POST /admin/restart` flushes the log store before signalling and now answers `501` on Windows, where `os.kill(SIGTERM)` is a hard `TerminateProcess` (no graceful shutdown and nothing starts the service again). The web console's Restart button now passes the required `?confirm=true`; before, it always got `400` and silently did nothing.
-- `.env` rewrites (settings panel, fallback toggle, generated API key) are atomic: a temp file next to `.env` is swapped in with `os.replace`, so a crash can no longer leave a truncated file. A read-only `.env` still fails up front with a permission error, the file mode is kept, and a bind-mounted `.env` that cannot be renamed over falls back to a direct write. A newly created `.env` is now private (0600). The parent directory is fsynced after the swap on POSIX (best effort).
-- The web console's Restart button no longer claims "Restarting service..." when the request failed: it shows the real error and does not start the reload/health polling. `GET /admin/system-info` reports `restart_supported`, and the button is hidden where restart is unsupported (Windows).
-
----
 
 ## [1.7.1] - 2026-10-14 (badmarsh/gemini2api v1.7.1)
 

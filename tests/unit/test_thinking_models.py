@@ -21,10 +21,12 @@ def test_model_number_helper_resolves_public_names():
 
 
 import json
-from app.core.gemini_client import GeminiWebClient, _build_model_header_thinking, MODEL_HEADER_KEY
+from app.core.gemini_client import GeminiWebClient, _build_model_header, MODEL_HEADER_KEY
 
 def test_thinking_header_15_elements():
-    h = _build_model_header_thinking("gemini-flash", "SESSION-UUID-1")
+    # One header form serves thinking and non-thinking requests alike (2026-10-13 protocol): the old
+    # 17-element variant was dead code that merely delegated here.
+    h = _build_model_header("gemini-flash")
     arr = json.loads(h[MODEL_HEADER_KEY])
     assert len(arr) == 15
     assert arr[4] == "56fdd199312815e2" or arr[4] == "fbb127bbb056c959"  # flash id (family)
@@ -97,7 +99,7 @@ def test_argon_payload_encoding():
     assert inner[79] == 8          # model_number for argon
     assert inner[80] == 2          # extended thinking
     
-    header = _build_model_header_thinking("gemini-4-argon", "SESSION-UUID")
+    header = _build_model_header("gemini-4-argon")
     arr = json.loads(header[MODEL_HEADER_KEY])
     assert len(arr) == 15
     assert arr[4] == "95a4c0abcba24364"  # argon model id

@@ -144,6 +144,30 @@ def maybe_image_generation_intent(text: str) -> bool:
     return has_noun and has_verb
 
 
+# Appended to the END of every tool-mode prompt. A prefix-only instruction is the first thing a chat model
+# forgets in a long turn; the community fix for the "agent stalls after 1-2 tool calls" problem (issues #97
+# and friends) is the same reminder restated right before the model answers. Kept in the model's own
+# instruction voice and deliberately blunt: "promise" phrasing is what makes a harness end the turn.
+TOOL_LOOP_REMINDER = (
+    "[MANDATORY — READ BEFORE ANSWERING]\n"
+    "You are inside a tool loop. If the task needs a command, a file read or a file write, ANSWER WITH THE "
+    "tool_call JSON AND NOTHING ELSE — do it in this message.\n"
+    "Never answer with a promise, a plan, a status update or a progress report ('I will inspect...', "
+    "'Let me check...', 'Working on it...', 'I'll let you know...'). Those end the turn and the work stops.\n"
+    "Text is only for the FINAL answer, after the work is done and verified, or for a question you truly "
+    "cannot answer with the tools you have."
+)
+
+
+def _tool_loop_reminder_enabled() -> bool:
+    """Read the setting lazily so tests/settings panels can toggle it at runtime."""
+    try:
+        from app.config import settings
+        return bool(getattr(settings, "tool_loop_reminder", True))
+    except Exception:  # config import must never break prompt building
+        return True
+
+
 def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
     if not tools:
         return prompt
@@ -196,7 +220,13 @@ def build_tool_prompt(prompt: str, tools: list[dict], tool_choice=None) -> str:
         '{"status": "text", "content": "Hello, how can I help?"}'
     )
 
-    return f"{system_block}\n\nUser message: {prompt}"
+    tail = ""
+    # tool_choice="none" means the caller explicitly wants text only — a reminder to call a tool would
+    # contradict it.
+    if tool_choice != "none" and _tool_loop_reminder_enabled():
+        tail = f"\n\n{TOOL_LOOP_REMINDER}"
+
+    return f"{system_block}\n\nUser message: {prompt}{tail}"
 
 
 def _strip_code_fence(text: str) -> str:

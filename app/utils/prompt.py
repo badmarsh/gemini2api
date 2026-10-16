@@ -17,6 +17,52 @@ _MIME_EXT = {
 }
 
 
+def argon_system_text(caller_system: str, argon_sys: str, mode: str) -> str:
+    """Combine a caller's system text with ``ARGON_SYSTEM_PROMPT`` according to ``mode``."""
+    argon = (argon_sys or "").strip()
+    caller = (caller_system or "").strip()
+    if not argon:
+        return caller_system or ""
+    if not caller:
+        return argon
+    mode = (mode or "merge").strip().lower()
+    if mode == "only_when_none":
+        return caller
+    if mode == "replace":
+        return argon
+    return f"{argon}\n\n{caller}"
+
+
+def apply_argon_system(messages: list[dict], argon_sys: str, mode: str) -> tuple[list[dict], str | None]:
+    """Fold ``ARGON_SYSTEM_PROMPT`` into a message list.
+
+    Returns ``(messages, system_text)`` ready for :func:`build_prompt_from_messages`: the system/developer
+    messages are lifted out of ``messages`` and merged with ``ARGON_SYSTEM_PROMPT`` into ``system_text``
+    (``None`` means nothing to pass, i.e. no Argon prompt and no caller system message).
+
+    Coding harnesses (Codex, Cline, OpenCode) *always* send their own developer prompt, so the old
+    "inject only when the caller sent nothing" rule silently disabled the Argon rules for exactly the
+    clients they were written for. Modes:
+      * ``merge``          - Argon rules first, then the caller's text (default);
+      * ``only_when_none`` - legacy behaviour: keep the caller's text untouched when there is one;
+      * ``replace``        - use the Argon rules instead of the caller's text.
+    """
+    argon = (argon_sys or "").strip()
+    if not argon:
+        # No Argon prompt configured: leave the message list exactly as the caller sent it (zero regression).
+        return messages, None
+    caller_msgs = [m for m in messages
+                   if isinstance(m, dict) and m.get("role") in ("system", "developer")]
+    caller_text = "\n\n".join(
+        (m.get("content") if isinstance(m.get("content"), str) else "") or "" for m in caller_msgs
+    ).strip()
+    combined = argon_system_text(caller_text, argon, mode)
+    # The merged text carries everything the model must see; drop the now-duplicated caller messages so
+    # they are not flattened into the prompt twice.
+    rest = [m for m in messages if not (isinstance(m, dict) and m.get("role") in ("system", "developer"))]
+    return rest, (combined or None)
+
+
 def _flatten_tool_result_content(content) -> str:
     """tool_result 的 content 支持字符串或文本块数组两种形态，统一展平成纯文本。"""
     if isinstance(content, str):

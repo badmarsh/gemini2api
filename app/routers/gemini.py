@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import HTTPStatusError, UPSTREAM_ERRORS, classify_error
-from app.core import argon_fallback
+from app.core import agent_loop, argon_fallback
 from app.core.stream import split_into_chunks, iter_with_keepalive, sse_keepalive_during
 from app.models.gemini import (
     GeminiRequest,
@@ -22,7 +22,7 @@ from app.models.gemini import (
     GeminiModelList,
 )
 from app.utils.tools import build_tool_prompt, parse_tool_response_with_retry, estimate_tokens, is_image_generation_intent
-from app.utils.prompt import build_prompt_from_messages
+from app.utils.prompt import argon_system_text, build_prompt_from_messages
 from app.core.limiter import limiter, dynamic_rate_limit, rate_limit_exempt
 
 logger = logging.getLogger(__name__)
@@ -202,10 +202,16 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
             gem_account_id = gem_info.get("account_id") or None
             model = gem_info.get("base_model") or "gemini-pro"
 
-    model, is_argon, force_thinking = argon_fallback.plan(model, model)
+    model, is_argon, force_thinking, argon_served_by = argon_fallback.plan(model, model)
+    _pre_headers = argon_fallback.plan_headers(argon_served_by)
 
     messages, attachments = _parse_contents(req.contents)
     system = _parse_system(req.system_instruction)
+    if argon_fallback.is_argon_model(model):
+        # Merge the Argon rules in front of the caller's system instruction (ARGON_SYSTEM_PROMPT_MODE);
+        # coding harnesses always send their own, which used to disable the Argon rules silently.
+        system = argon_system_text(system, getattr(settings, "argon_system_prompt", ""),
+                                   getattr(settings, "argon_system_prompt_mode", "merge"))
     prompt = build_prompt_from_messages(messages, system=system)
 
     has_tools = False
@@ -239,12 +245,20 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
     # 工具调用：解析成 Gemini 原生 functionCall part（而非把工具 JSON 当文本塞回去）
     tool_parts = []
     if has_tools:
-        async def _regenerate_for_tools() -> str:
-            r = await argon_fallback.generate(gemini_client, prompt, model, attachments,
-                                              is_argon=is_argon, thinking=force_thinking,
+        served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
+        retry_model = settings.argon_fallback_model if served else model
+        retry_is_argon = is_argon and not served
+
+        async def _regenerate_for_tools(nudge: str = "") -> str:
+            r = await argon_fallback.generate(gemini_client, prompt + nudge, retry_model, attachments,
+                                              is_argon=retry_is_argon, thinking=force_thinking,
                                               gem_id=gem_id, account_id=gem_account_id)
             return r.get("text", "")
 
+        # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
+        response_text, _stall_corrected = await agent_loop.guard_tool_loop(
+            response_text, _regenerate_for_tools,
+            enabled=getattr(settings, "tool_loop_stall_guard", True))
         parsed = await parse_tool_response_with_retry(response_text, _regenerate_for_tools)
         if isinstance(parsed, dict):
             if parsed.get("type") == "tool_calls":
@@ -293,6 +307,9 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
         },
     }
 
+    _hdr = {**_pre_headers, **argon_fallback.result_headers(result)}
+    if _hdr:
+        return JSONResponse(content=gemini_response, headers=_hdr)
     return JSONResponse(content=gemini_response)
 
 
@@ -314,10 +331,16 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
             gem_account_id = gem_info.get("account_id") or None
             model = gem_info.get("base_model") or "gemini-pro"
 
-    model, is_argon, force_thinking = argon_fallback.plan(model, model)
+    model, is_argon, force_thinking, argon_served_by = argon_fallback.plan(model, model)
+    _pre_headers = argon_fallback.plan_headers(argon_served_by)
 
     messages, attachments = _parse_contents(req.contents)
     system = _parse_system(req.system_instruction)
+    if argon_fallback.is_argon_model(model):
+        # Merge the Argon rules in front of the caller's system instruction (ARGON_SYSTEM_PROMPT_MODE);
+        # coding harnesses always send their own, which used to disable the Argon rules silently.
+        system = argon_system_text(system, getattr(settings, "argon_system_prompt", ""),
+                                   getattr(settings, "argon_system_prompt_mode", "merge"))
     prompt = build_prompt_from_messages(messages, system=system)
 
     has_tools = False
@@ -373,12 +396,31 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                 # 比修复前（只发降级提示）更糟。未发生重试时 _retried 为空，行为逐字节不变。
                 _retried = {}
 
-                async def _regenerate_for_tools() -> str:
-                    r = await argon_fallback.generate(gemini_client, prompt, model, attachments,
-                                                      is_argon=is_argon, thinking=force_thinking,
+                _served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
+                _retry_model = settings.argon_fallback_model if _served else model
+                _retry_is_argon = is_argon and not _served
+
+                async def _regenerate_for_tools(nudge: str = "") -> str:
+                    r = await argon_fallback.generate(gemini_client, prompt + nudge, _retry_model, attachments,
+                                                      is_argon=_retry_is_argon, thinking=force_thinking,
                                                       gem_id=gem_id, account_id=gem_account_id)
                     _retried["text"] = r.get("text", "")
                     return _retried["text"]
+
+                # Agent-loop guard (NDJSON stream: reuse the blank-line keepalive rhythm).
+                guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
+                    response_text, _regenerate_for_tools,
+                    enabled=getattr(settings, "tool_loop_stall_guard", True)))
+                try:
+                    async for _ping in sse_keepalive_during(guard_task):
+                        yield "\n"
+                except BaseException:          # GeneratorExit / CancelledError on client disconnect
+                    guard_task.cancel()
+                    if guard_task.done() and not guard_task.cancelled():
+                        guard_task.exception()
+                    raise
+                response_text, _stall_corrected = guard_task.result()
+                _retried["corrected"] = response_text
 
                 # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——这条 NDJSON 流早就开了
                 # （上面的空行保活已经发过），裸 await 会制造一次远超单个 keepalive 间隔的
@@ -397,7 +439,7 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                     raise
                 parsed = parse_task.result()
                 if isinstance(parsed, dict):
-                    response_text = parsed.get("content", _retried.get("text") or response_text)
+                    response_text = parsed.get("content", _retried.get("text") or _retried.get("corrected") or response_text)
             async for chunk in split_into_chunks(response_text):
                 yield _chunk(chunk)
         else:
@@ -410,6 +452,15 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                     if _kind == "ping":
                         # NDJSON blank-line keepalive (SSE ": ping" comment is invalid on this application/json stream)
                         yield "\n"
+                        continue
+                    if evt.get("type") == "serve_marker":
+                        # NDJSON has no comment syntax: announce the substitution as its own line. Clients
+                        # that only read candidates ignore it; operators and logs do not have to guess.
+                        logger.warning(f"Argon -> {evt.get('served_by')} ({evt.get('reason')}): "
+                                       f"stream served by the fallback model")
+                        yield json.dumps({"gemini2api": {
+                            "argon_fallback": {"served_by": evt.get("served_by"), "reason": evt.get("reason")},
+                        }}) + "\n"
                         continue
                     if evt.get("type") == "delta":
                         # generate_stream 现在是严格 append-only（不再发 _replace），delta 总是新增尾部
@@ -458,4 +509,5 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
         }
         yield json.dumps(final_chunk) + "\n"
 
-    return StreamingResponse(stream_generator(), media_type="application/json")
+    return StreamingResponse(stream_generator(), media_type="application/json",
+                             headers={**argon_fallback.stream_headers(is_argon), **_pre_headers})

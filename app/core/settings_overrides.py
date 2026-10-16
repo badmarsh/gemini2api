@@ -53,6 +53,12 @@ EDITABLE_FIELDS = {
     "chat_cleanup_skip_pinned",
     "extended_thinking_enabled",
     "log_bodies_enabled",
+    # Argon / agent-loop knobs (see .env.example): the anti-stall guard and the prompt-merge mode are the
+    # two switches a coding-harness operator actually flips, so they belong in the panel.
+    "argon_system_prompt_mode",
+    "argon_timeout",
+    "tool_loop_reminder",
+    "tool_loop_stall_guard",
 }
 
 # 字段声明类型，用于类型校验与 JSON 数值收敛。
@@ -77,6 +83,10 @@ FIELD_TYPES = {
     "chat_cleanup_skip_pinned": bool,
     "extended_thinking_enabled": bool,
     "log_bodies_enabled": bool,
+    "argon_system_prompt_mode": str,
+    "argon_timeout": int,
+    "tool_loop_reminder": bool,
+    "tool_loop_stall_guard": bool,
 }
 
 # Runtime toggles that have their own dedicated switch outside the settings panel. They are

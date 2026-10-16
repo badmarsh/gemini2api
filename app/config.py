@@ -114,9 +114,31 @@ class Settings(BaseSettings):
     # After an Argon stall (timeout), serve Argon requests from the Flash fallback for this many seconds instead
     # of letting each one wait out the same timeout. 0 disables. Only active when argon_fallback_to_flash=true.
     argon_stall_breaker_seconds: int = 180
+    # Argon request timeout in seconds (0 = keep the built-in default). Argon's test-time compute
+    # regularly needs 30-75s before the first token; lower it for snappier failures, raise it for very
+    # long agent turns. A stuck request is handled by the stall breaker above, not by a shorter timeout.
+    argon_timeout: int = 360
+    # Does the StreamGenerate payload continue a conversation the server already holds? It does NOT:
+    # the 81-element thinking payload has no slot for it (inner[2] is the metadata block, spec §4.3), so
+    # a stored conversation_id is ignored upstream. The routers therefore send the CLIENT's full history
+    # instead of just the last user message. Set true only after re-verifying the protocol (an ignored
+    # conversation_id plus a stripped prompt means the model answers without any context).
+    server_side_continuation: bool = False
     # Optional system prompt prepended to every Argon request (before any user/tool content).
     # Set via ARGON_SYSTEM_PROMPT env var. Empty string = disabled. Supports multiline via \n escapes.
     argon_system_prompt: str = ""
+    # How ARGON_SYSTEM_PROMPT combines with a system/developer message the caller already sent:
+    #   "merge"          - prepend it in front of the caller's own system message (default);
+    #   "only_when_none" - the old behaviour: skip it entirely when the caller sent one. Coding harnesses
+    #                      (Codex, Cline, OpenCode) always send their own developer prompt, so this silently
+    #                      disabled the Argon rules in exactly the setup they were written for;
+    #   "replace"        - drop the caller's system message and use ARGON_SYSTEM_PROMPT instead.
+    argon_system_prompt_mode: str = "merge"
+    # Agent loop guard (coding harnesses): append a hard "act with a tool now, no promises" reminder to the
+    # end of every tool-mode prompt, and detect a conversational stall (a reply that only promises future
+    # work) and correct it once. Both are inert when the request declares no tools.
+    tool_loop_reminder: bool = True
+    tool_loop_stall_guard: bool = True
 
     @field_validator("gemini_psid")
     @classmethod

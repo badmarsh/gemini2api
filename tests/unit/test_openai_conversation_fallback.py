@@ -1,14 +1,17 @@
 """Regression tests for multi-turn context in POST /v1/chat/completions.
 
 An audit claimed that a stale or unknown ``conversation_id`` drops earlier turns
-and only the last user message reaches Gemini. The router actually behaves the
-other way round: only a *valid* stored ``gemini_conv_id`` sends the last user
-message alone (server-side session continuation). In every other case
-(no conversation_id, unknown/stale id, stored conversation without a
-gemini_conv_id) the whole message history is flattened into the prompt and the
-upstream call gets an empty conversation id.
+and only the last user message reaches Gemini. The router must always send the
+whole flattened history, because **nothing upstream can continue a conversation**:
+the 81-element StreamGenerate payload has no slot for a conversation id
+(``inner[2]`` is the metadata block, spec §4.3 — see ``SERVER_SIDE_CONTINUATION``).
+Stripping the prompt down to the last user message therefore used to lose the
+context silently: the client's id was "accepted" and the model answered without
+any history.
 
-These tests pin that behavior so a future refactor cannot silently regress it.
+Only when ``SERVER_SIDE_CONTINUATION=true`` (i.e. after re-verifying the protocol)
+does a valid stored ``gemini_conv_id`` send the last user message alone. These
+tests pin both behaviours so a future refactor cannot silently regress either.
 """
 
 _AUTH = {"Authorization": "Bearer sk-test-key"}
@@ -77,8 +80,19 @@ def test_stored_conversation_without_gemini_id_keeps_full_history(gem_client, mo
     _assert_full_history(captured)
 
 
-def test_valid_gemini_conv_id_sends_only_last_user_message(gem_client, monkeypatch):
-    """Control: the one case that really does send just the latest user message."""
+def test_valid_gemini_conv_id_still_sends_the_full_history(gem_client, monkeypatch):
+    """The payload cannot continue a stored conversation, so the history must survive."""
+    store = _FakeStore({"conv-2": _FakeConv(gemini_conv_id="gconv-123")})
+    captured = _post(gem_client, monkeypatch, store, conversation_id="conv-2")
+    _assert_full_history(captured)
+
+
+def test_continuation_flag_restores_last_message_only(gem_client, monkeypatch):
+    """SERVER_SIDE_CONTINUATION=true is the escape hatch: strip to the newest user message and forward the
+    stored id (only correct once the wire protocol can really carry the conversation)."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "server_side_continuation", True)
     store = _FakeStore({"conv-2": _FakeConv(gemini_conv_id="gconv-123")})
     captured = _post(gem_client, monkeypatch, store, conversation_id="conv-2")
     assert captured["conversation_id"] == "gconv-123"

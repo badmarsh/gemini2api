@@ -12,7 +12,7 @@ from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES
 from app.core.fallback import is_empty_result
-from app.core import argon_breaker
+from app.core import agent_loop, argon_fallback
 from app.core.responses_protocol import (
     parse_responses_input, build_responses_object, new_response_id, ResponsesStreamEncoder,
 )
@@ -124,12 +124,10 @@ async def create_response(request: Request):
             gem_account_id = gem_info.get("account_id") or None
             resolved_model = gem_info.get("base_model") or "gemini-pro"
 
-    is_argon = ("argon" in model.lower() or "argon" in resolved_model.lower())
-    if is_argon and (getattr(settings, "argon_always_fallback", False) or argon_breaker.is_open()):
-        logger.info(f"Argon requested ('{model}'), but argon_always_fallback or the stall breaker is active. Serving {settings.argon_fallback_model}.")
-        resolved_model = settings.argon_fallback_model
+    resolved_model, is_argon, force_thinking, argon_served_by = argon_fallback.plan(model, resolved_model)
+    if force_thinking:
         extended_thinking = True
-        is_argon = False
+    _pre_headers = argon_fallback.plan_headers(argon_served_by)
 
     request_params = _request_params(body)
 
@@ -159,20 +157,12 @@ async def create_response(request: Request):
         )
 
     try:
-        result = await gemini_client.generate(prompt, resolved_model, "", attachments,
-                                              gem_id=gem_id, account_id=gem_account_id,
-                                              extended_thinking=extended_thinking)
+        # Argon -> Flash rules live in app/core/argon_fallback.py (one implementation, marked substitutions).
+        result = await argon_fallback.generate(
+            gemini_client, prompt, resolved_model, attachments,
+            is_argon=is_argon, thinking=extended_thinking, gem_id=gem_id, account_id=gem_account_id)
     except Exception as e:
-        if is_argon and getattr(settings, "argon_fallback_to_flash", True):
-            logger.warning(f"Argon request failed ({e}), falling back to {settings.argon_fallback_model}")
-            try:
-                result = await gemini_client.generate(prompt, settings.argon_fallback_model, "", attachments,
-                                                      gem_id=gem_id, account_id=gem_account_id,
-                                                      extended_thinking=True)
-            except Exception as e_fb:
-                logger.error(f"Fallback to {settings.argon_fallback_model} also failed: {e_fb}")
-                return _error(502, str(e), error_type="api_error")
-        elif extended_thinking:
+        if extended_thinking:
             logger.warning(f"extended-thinking request failed, retrying normal: {e}")
             try:
                 result = await gemini_client.generate(prompt, resolved_model, "", attachments,
@@ -186,26 +176,25 @@ async def create_response(request: Request):
     text = result.get("text", "")
     res_text = (text or "").strip()
     is_err_text = bool(res_text and any(res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
-    if is_argon and getattr(settings, "argon_fallback_to_flash", True) and (is_empty_result(result) or is_err_text):
-        logger.warning(f"Argon returned empty or web error ({res_text[:60]}), falling back to {settings.argon_fallback_model}")
-        try:
-            result = await gemini_client.generate(prompt, settings.argon_fallback_model, "", attachments,
-                                                  gem_id=gem_id, account_id=gem_account_id,
-                                                  extended_thinking=True)
-            text = result.get("text", "")
-        except Exception as e_fb:
-            logger.error(f"Fallback to {settings.argon_fallback_model} also failed: {e_fb}")
     # AI 生成图片：沿用 chat/completions 的既有做法，Markdown 图片链接嵌入文字内容（design §4.3）
     gen_images = result.get("images") or []
     if gen_images:
         md = _images_to_markdown(gen_images, request)
         text = (md + "\n" + text.strip()) if text.strip() else md
-    async def _regenerate_for_tools() -> str:
-        r = await gemini_client.generate(prompt, resolved_model, "", attachments,
-                                         gem_id=gem_id, account_id=gem_account_id,
-                                         extended_thinking=extended_thinking)
+    _served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
+    _retry_model = settings.argon_fallback_model if _served else resolved_model
+    _retry_is_argon = is_argon and not _served
+
+    async def _regenerate_for_tools(nudge: str = "") -> str:
+        r = await argon_fallback.generate(gemini_client, prompt + nudge, _retry_model, attachments,
+                                          is_argon=_retry_is_argon, thinking=extended_thinking,
+                                          gem_id=gem_id, account_id=gem_account_id)
         return r.get("text", "")
 
+    if has_tools:
+        # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
+        text, _stall_corrected = await agent_loop.guard_tool_loop(
+            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True))
     output, _ = await _build_output_items(text, has_tools, _regenerate_for_tools)
     thoughts = result.get("thoughts") or ""
     if thoughts:
@@ -276,37 +265,35 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
         text = result.get("text", "")
         res_text = (text or "").strip()
         is_err_text = bool(res_text and any(res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
-        if is_argon and getattr(settings, "argon_fallback_to_flash", True) and (is_empty_result(result) or is_err_text):
-            logger.warning(f"Argon stream(buffered) returned empty/error text, falling back to {settings.argon_fallback_model}")
-            fb_task = asyncio.create_task(gemini_client.generate(prompt, settings.argon_fallback_model, "", attachments,
-                                                                 gem_id=gem_id, account_id=gem_account_id,
-                                                                 extended_thinking=True))
-            try:
-                async for ping in sse_keepalive_during(fb_task):
-                    yield ping
-            except BaseException:
-                fb_task.cancel()
-                if fb_task.done() and not fb_task.cancelled():
-                    fb_task.exception()
-                raise
-            try:
-                result = fb_task.result()
-                text = result.get("text", "")
-            except Exception as e_fb:
-                yield enc.failed(str(e_fb))
-                return
         thoughts = result.get("thoughts") or ""
         gen_images = result.get("images") or []
         if gen_images:
             md = _images_to_markdown(gen_images, request)
             text = (md + "\n" + text.strip()) if text.strip() else md
         # 此处只发过 created/in_progress/keepalive，还没发任何 output 块，重试是安全的。
-        async def _regenerate_for_tools() -> str:
-            model_to_use = settings.argon_fallback_model if is_argon else model
-            r = await gemini_client.generate(prompt, model_to_use, "", attachments,
-                                             gem_id=gem_id, account_id=gem_account_id,
-                                             extended_thinking=extended_thinking or is_argon)
+        _served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
+        _retry_model = settings.argon_fallback_model if _served else model
+        _retry_is_argon = is_argon and not _served
+
+        async def _regenerate_for_tools(nudge: str = "") -> str:
+            r = await argon_fallback.generate(gemini_client, prompt + nudge, _retry_model, attachments,
+                                              is_argon=_retry_is_argon, thinking=extended_thinking or is_argon,
+                                              gem_id=gem_id, account_id=gem_account_id)
             return r.get("text", "")
+
+        if has_tools:
+            # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
+            guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
+                text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True)))
+            try:
+                async for ping in sse_keepalive_during(guard_task):
+                    yield ping
+            except BaseException:
+                guard_task.cancel()
+                if guard_task.done() and not guard_task.cancelled():
+                    guard_task.exception()
+                raise
+            text, _stall_corrected = guard_task.result()
 
         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——这条流早就开了（created/
         # in_progress/keepalive 已发），裸 await 会在已开的连接上制造一次远超单个 keepalive

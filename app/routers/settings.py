@@ -40,6 +40,7 @@ class SettingsResponse(BaseModel):
     # 新增分组必须在此显式声明：pydantic 默认 extra="ignore"，且路由声明了
     # response_model=SettingsResponse，未声明的分组会被静默丢弃（面板永远看不到该开关）。
     logging: Dict[str, Any] = Field(default_factory=dict, description="Request/response body logging settings")
+    argon: Dict[str, Any] = Field(default_factory=dict, description="Argon model + agent-loop settings")
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -90,6 +91,12 @@ def _get_grouped_settings() -> Dict[str, Dict[str, Any]]:
         },
         "logging": {
             "log_bodies_enabled": settings.log_bodies_enabled,
+        },
+        "argon": {
+            "argon_system_prompt_mode": settings.argon_system_prompt_mode,
+            "argon_timeout": settings.argon_timeout,
+            "tool_loop_reminder": settings.tool_loop_reminder,
+            "tool_loop_stall_guard": settings.tool_loop_stall_guard,
         },
     }
 

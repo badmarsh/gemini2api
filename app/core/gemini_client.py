@@ -27,6 +27,13 @@ _IMAGE_SIZE_DEFAULT = "=s2048"  # 2048px 边长足够预览，字节/耗时远�
 _GENERATE_TIMEOUT_DEFAULT = 180  # 普通对话 POST 超时（pro 深度思考常需 >60s）
 _GENERATE_TIMEOUT_IMAGE = 180  # 生图 POST 超时（pro 常 >60s，flash 通常 <60s）
 _GENERATE_TIMEOUT_ARGON = 360  # Argon 深度思考（mandatory test-time extended thinking）POST 超时
+# 流式路径：Argon 首帧（TTFT）通常 30–75s，偶发 >2 分钟。首帧前用 150s 包住（首帧之前本来就没有
+# 任何东西可以交给客户端），而「已有内容之后的静默」必须保持 240s：rt=c 会话下 Google 会保持
+# HTTP/2 流，之后还可能补上收尾帧；提前收尾 = 静默截断回答（对 tool_call JSON 更致命，截断即坏 JSON）。
+# evals/cases/test_argon_fallback.py::test_long_silence_is_covered_by_keepalive 就是这条不变量的守卫，
+# 请勿为了"更快"把它调小。
+_ARGON_FIRST_CHUNK_TIMEOUT = 150.0   # 首帧之前单次 aiter 等待（仅流式）
+_ARGON_STREAM_CHUNK_TIMEOUT = 240.0  # 已有内容后单次 aiter 等待（保持原值，见上）
 
 
 class HTTPStatusError(Exception):
@@ -81,6 +88,20 @@ GOOGLE_WEB_ERROR_PHRASES = (
 # begins with the same words (e.g. a user asking for sample error copy) is longer or
 # spans several lines.
 _ERROR_TEMPLATE_MAX_TAIL = 90
+
+
+# Argon has one failure mode nothing else has: the stream completes, frames arrive, the reply is empty and no
+# exception is raised anywhere. ``generate_stream`` returns an empty final event and the routers (correctly)
+# do not fail over on a "successful" 200. We cannot recover the answer, but we must not let it look like a
+# normal, healthy reply either -- so it is counted and logged, and the counter is exposed to the admin panel.
+# The count is process-local on purpose (an empty reply that never fails over is what the metric is for).
+_argon_salvaged_results = 0
+
+
+def count_argon_salvaged_results() -> int:
+    """Number of Argon streams that completed with frames but produced no answer at all."""
+    return _argon_salvaged_results
+
 
 
 def _is_google_error_reply(text: str) -> bool:
@@ -318,12 +339,6 @@ def _build_model_header(model_name: str) -> dict[str, str]:
     }
 
 
-def _build_model_header_thinking(model_name: str, session_uuid: str) -> dict[str, str]:
-    """The 2026-10-13 protocol has a single header form for thinking and
-    non-thinking requests alike; delegate to _build_model_header."""
-    return _build_model_header(model_name)
-
-
 MODELS_CACHE_FILE = Path("data/models_cache.json")
 
 # 生图/找图时模型回复文本里会带这种 googleusercontent 占位 URL（无实际意义，
@@ -529,6 +544,36 @@ def _rand_reqid() -> int:
     """batchexecute 需要的 _reqid 参数。"""
     return random.randint(10000, 99999)
 
+
+
+_continuation_drop_warned = False
+
+
+def _note_continuation_dropped(conversation_id: str) -> None:
+    """The 81-element thinking payload has no slot for a conversation to continue (inner[2] is the metadata
+    block, spec §4.3), so a stored ``conversation_id`` is ignored upstream. That used to be invisible: the
+    routers stripped the request down to the last user message because they believed the server held the
+    context, and the model silently answered without it. Logged once per process; the value itself is never
+    printed (it is an opaque Google-side id)."""
+    global _continuation_drop_warned
+    if _continuation_drop_warned:
+        return
+    _continuation_drop_warned = True
+    logger.warning(
+        "StreamGenerate thinking payload cannot continue a stored conversation (%d chars ignored): the "
+        "proxy therefore sends the full history (see SERVER_SIDE_CONTINUATION). This message is logged once.",
+        len(conversation_id or ""),
+    )
+
+
+def _argon_generate_timeout() -> float:
+    """Argon POST timeout: ARGON_TIMEOUT wins when set, else the built-in default (probes/tests rely on
+    the constant, so the default stays where it was)."""
+    try:
+        value = float(getattr(settings, "argon_timeout", 0) or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    return value if value > 0 else float(_GENERATE_TIMEOUT_ARGON)
 
 
 def _is_timeout_error(exc: Exception) -> bool:
@@ -1297,6 +1342,10 @@ class GeminiWebClient:
 
     def _encode_payload(self, prompt: str, model: str, conversation_id: str = "",
                         file_ids: list | None = None, gem_id: str | None = None) -> str:
+        """PR#310 legacy 4-element payload. NOT used at runtime any more: StreamGenerate black-holes it since
+        the 2026-10-13 Argon rollout, so every request goes through ``_encode_payload_thinking``. It is kept
+        because tests byte-compare it against the pre-Argon encoder (regression guard) and because it is the
+        reference for where a conversation id *would* go (``inner[2]``)."""
         conv_param = conversation_id if conversation_id else None
         if file_ids:
             # 有附件：第 0 位用带文件的 message_content 替换纯 [prompt]
@@ -1317,7 +1366,18 @@ class GeminiWebClient:
 
     def _encode_payload_thinking(self, prompt: str, model: str, conversation_id: str = "",
                                  file_ids: list | None = None, gem_id: str | None = None) -> tuple[str, str]:
-        """PR#310 81-element thinking-path payload encoder (isolated from _encode_payload)."""
+        """PR#310 81-element thinking-path payload encoder (isolated from _encode_payload).
+
+        Returns ``(f.req, request_uuid)``. The UUID is minted here, stored at ``inner[59]`` and **must** be
+        the one echoed in the ``x-goog-ext-525005358-jspb`` companion header -- callers used to discard it and
+        mint a second, unrelated UUID for the header.
+
+        ``conversation_id`` is accepted for signature compatibility but the payload cannot continue a stored
+        conversation (no slot exists; ``inner[2]`` is the metadata block). See
+        ``_note_continuation_dropped`` and ``SERVER_SIDE_CONTINUATION``.
+        """
+        if conversation_id:
+            _note_continuation_dropped(conversation_id)
         DEFAULT_METADATA = ["", "", "", None, None, None, None, None, None, ""]
         if file_ids:
             file_data = [[[fid], fname] for fid, fname in file_ids]
@@ -1458,12 +1518,13 @@ class GeminiWebClient:
         # Same 2026-10-13 protocol requirements as _send_request: 81-element
         # thinking payload (Argon is mandatory-thinking), 15-element model
         # header, companion headers, bl/f.sid URL params.
-        encoded, _ = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
+        encoded, request_uuid = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
         model_headers = _build_model_header(resolved)
         headers = self._stream_generate_headers()
         if model_headers:
             headers.update(model_headers)
-        headers["x-goog-ext-525005358-jspb"] = f'["{str(uuid.uuid4()).upper()}",1]'
+        # Companion header: the SAME per-request UUID the payload carries at inner[59]. Do not mint a new one.
+        headers["x-goog-ext-525005358-jspb"] = f'["{request_uuid}",1]'
 
         buf = ""
         emitted = ""             # 已 yield 出去的完整文本（用于和新帧比前缀算增量）
@@ -1472,8 +1533,14 @@ class GeminiWebClient:
         last_thoughts = ""       # 累积思维链（最新一帧的完整思考文本，final 兜底用）
         emitted_thoughts = ""    # 已 yield 出去的思维链前缀（逐帧增量用）
         last_images: list = []
-        chunk_timeout = 240 if "argon" in resolved else 120      # 单个 chunk 最长等待（兜底 #215 timeout 失效）
-        stream_timeout = _GENERATE_TIMEOUT_ARGON if "argon" in resolved else 180
+        is_argon = "argon" in resolved
+        # 首帧前用长超时（Argon TTFT 30–75s），首字节到达后用更短的超时：一条静默的上游不会把
+        # 客户端挂满 240s。两者对 failover/断路器都算 stall（见 account_pool._is_stall）。
+        first_chunk_timeout = _ARGON_FIRST_CHUNK_TIMEOUT if is_argon else 120
+        after_chunk_timeout = _ARGON_STREAM_CHUNK_TIMEOUT if is_argon else 120
+        stream_timeout = _argon_generate_timeout() if is_argon else 180
+        saw_bytes = False
+        saw_frame = False
 
         # Warm shared session: at/bl/f.sid were minted on self._http in
         # _obtain_session_token, so the POST must ride that same HTTP/2
@@ -1495,31 +1562,34 @@ class GeminiWebClient:
 
                     aiter = resp.aiter_content()
                     while True:
+                        timeout_now = after_chunk_timeout if saw_bytes else first_chunk_timeout
                         try:
-                            chunk = await asyncio.wait_for(aiter.__anext__(), timeout=chunk_timeout)
+                            chunk = await asyncio.wait_for(aiter.__anext__(), timeout=timeout_now)
                         except StopAsyncIteration:
                             break
                         except asyncio.TimeoutError:
-                            # rt=c keep-alive: Google can hold the HTTP/2 stream
-                            # open after the final frame. If content already
-                            # streamed, finish cleanly instead of raising.
+                            # 已有内容后上游静默：rt=c keep-alive 下 Google 可能只是保持连接
+                            # （收尾帧已到），正常收尾更友好；但上游真的卡死也要说实话，
+                            # 日志里区分两种（truncated 与否由调用方的 final 文本体现）。
                             if emitted:
                                 logger.warning(
                                     "generate_stream: no data for %ss after content started; "
                                     "ending stream (emitted_chars=%d, unparsed_buf_chars=%d). "
                                     "If the reply looks truncated, upstream may have stalled "
                                     "before its final frame.",
-                                    chunk_timeout, len(emitted), len(buf),
+                                    timeout_now, len(emitted), len(buf),
                                 )
                                 break
                             raise
                         if not chunk:
                             continue
+                        saw_bytes = True
                         buf += chunk.decode("utf-8", "replace")
                         frames, consumed = _scan_complete_wrb_frames(buf)
                         if consumed:
                             buf = buf[consumed:]
                         for elem in frames:
+                            saw_frame = True
                             text, conv, thoughts = _extract_text_from_wrb(elem)
                             if conv:
                                 last_conv = conv
@@ -1634,15 +1704,16 @@ class GeminiWebClient:
         # with companion headers; the legacy 4-element payload is silently
         # black-holed (probe5/probe6). Argon is a mandatory-thinking model, so
         # inner[80]=2 unconditionally, regardless of extended_thinking.
-        encoded, _ = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
+        encoded, request_uuid = self._encode_payload_thinking(prompt, resolved, conversation_id, file_ids, gem_id)
         model_headers = _build_model_header(resolved)
         headers = self._stream_generate_headers()
         if model_headers:
             headers.update(model_headers)
-        headers["x-goog-ext-525005358-jspb"] = f'["{str(uuid.uuid4()).upper()}",1]'
+        # Companion header: the SAME per-request UUID the payload carries at inner[59]. Do not mint a new one.
+        headers["x-goog-ext-525005358-jspb"] = f'["{request_uuid}",1]'
 
         gen_timeout = (
-            _GENERATE_TIMEOUT_ARGON if "argon" in resolved
+            _argon_generate_timeout() if "argon" in resolved
             else _GENERATE_TIMEOUT_IMAGE if maybe_image_generation_intent(prompt)
             else _GENERATE_TIMEOUT_DEFAULT
         )

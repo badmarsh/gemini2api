@@ -16,9 +16,13 @@ def test_buffered_stream_emits_immediate_sse_and_keepalive():
     # First role frame before awaiting generate result
     assert "async def _stream_response_buffered" in src
     idx_fn = src.index("async def _stream_response_buffered")
-    body = src[idx_fn : idx_fn + 2500]
+    body = src[idx_fn : idx_fn + 3500]
     assert "StreamDelta(role=\"assistant\")" in body
-    assert "_sse_keepalive_during(gen_task)" in body
+    # Keepalive while the upstream generate() runs. The call is wrapped in the local _keepalive_task()
+    # helper (which itself pumps _sse_keepalive_during and cancels the task on client disconnect), so the
+    # invariant to guard is "the generate task is driven through the keepalive helper".
+    assert "async for ping in _keepalive_task(gen_task)" in body
+    assert "_sse_keepalive_during(task)" in body
 
 
 def test_image_download_uses_s2048_and_short_timeout():

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import HTTPStatusError, UPSTREAM_ERRORS, classify_error
-from app.core import argon_fallback
+from app.core import agent_loop, argon_fallback
 from app.core.stream import split_into_chunks, iter_with_keepalive, SSE_KEEPALIVE_FRAME, sse_keepalive_during
 from app.models.claude import (
     ClaudeRequest, ClaudeResponse, ContentBlock, ClaudeUsage,
@@ -19,7 +19,7 @@ from app.models.claude import (
 )
 from app.routers.openai import _images_to_markdown
 from app.utils.tools import build_tool_prompt, parse_tool_response_with_retry, estimate_tokens, is_image_generation_intent
-from app.utils.prompt import build_prompt_from_messages, extract_attachments, last_user_text
+from app.utils.prompt import argon_system_text, build_prompt_from_messages, extract_attachments, last_user_text
 from app.core.limiter import limiter, dynamic_rate_limit, rate_limit_exempt
 
 logger = logging.getLogger(__name__)
@@ -98,14 +98,18 @@ async def create_message(req: ClaudeRequest, request: Request):
 
     # Same condition as in openai.py: judged on the *requested* model, so the prompt still applies when the
     # request is served by the Flash fallback (always-fallback / stall breaker).
-    wants_argon = "argon" in req.model.lower() or "argon" in resolved_model.lower()
-    resolved_model, is_argon, force_thinking = argon_fallback.plan(req.model, resolved_model)
+    resolved_model, is_argon, force_thinking, argon_served_by = argon_fallback.plan(req.model, resolved_model)
+    _pre_headers = argon_fallback.plan_headers(argon_served_by)
 
-    # ARGON_SYSTEM_PROMPT: only when the caller sent no system prompt. Built before build_tool_prompt below,
-    # which wraps the whole prompt.
-    _argon_sys = (getattr(settings, "argon_system_prompt", "") or "").strip()
-    if wants_argon and _argon_sys and not req.system:
-        prompt = build_prompt_from_messages(messages_raw, system=_argon_sys)
+    # ARGON_SYSTEM_PROMPT: merged in front of the caller's own system prompt by default — coding harnesses
+    # always send theirs, and the old "skip when the caller sent one" rule abandoned the Argon rules exactly
+    # there. Built before build_tool_prompt below, which wraps the whole prompt.
+    if argon_fallback.is_argon_model(req.model):
+        _combined = argon_system_text(req.system or "",
+                                      getattr(settings, "argon_system_prompt", ""),
+                                      getattr(settings, "argon_system_prompt_mode", "merge"))
+        if _combined:
+            prompt = build_prompt_from_messages(messages_raw, system=_combined)
 
     has_tools = bool(req.tools)
     # 生图意图优先：带 tools 但明确生图意图时跳过工具模拟，直接生图（否则生图被压制）。
@@ -135,7 +139,8 @@ async def create_message(req: ClaudeRequest, request: Request):
             _stream_claude(prompt, resolved_model, has_tools, attachments, req.model, gem_id, gem_account_id,
                           request=request, is_argon=is_argon, thinking=force_thinking),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                     **argon_fallback.stream_headers(is_argon), **_pre_headers},
         )
 
     try:
@@ -155,12 +160,19 @@ async def create_message(req: ClaudeRequest, request: Request):
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 
     if has_tools:
-        async def _regenerate_for_tools() -> str:
-            r = await argon_fallback.generate(gemini_client, prompt, resolved_model, attachments,
-                                              is_argon=is_argon, thinking=force_thinking,
+        served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
+        retry_model = settings.argon_fallback_model if served else resolved_model
+        retry_is_argon = is_argon and not served
+
+        async def _regenerate_for_tools(nudge: str = "") -> str:
+            r = await argon_fallback.generate(gemini_client, prompt + nudge, retry_model, attachments,
+                                              is_argon=retry_is_argon, thinking=force_thinking,
                                               gem_id=gem_id, account_id=gem_account_id)
             return r.get("text", "")
 
+        # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
+        text, _stall_corrected = await agent_loop.guard_tool_loop(
+            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True))
         parsed = await parse_tool_response_with_retry(text, _regenerate_for_tools)
         if parsed["type"] == "tool_calls":
             blocks = []
@@ -197,7 +209,7 @@ async def create_message(req: ClaudeRequest, request: Request):
     # 用单空格占位，恰好一块，不改变非空/纯空白文本的既有行为。
     blocks = [ContentBlock(type="text", text=text if text else " ")]
 
-    return ClaudeResponse(
+    body = ClaudeResponse(
         id=msg_id,
         model=req.model,
         content=blocks,
@@ -207,6 +219,10 @@ async def create_message(req: ClaudeRequest, request: Request):
             output_tokens=estimate_tokens(text),
         ),
     )
+    hdr = {**_pre_headers, **argon_fallback.result_headers(result)}
+    if hdr:
+        return JSONResponse(content=body.model_dump(), headers=hdr)
+    return body
 
 
 @router.post("/messages/count_tokens")
@@ -261,6 +277,11 @@ async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=N
                                            gem_id=gem_id, account_id=account_id)):
             if _kind == "ping":
                 yield SSE_KEEPALIVE_FRAME
+                continue
+            if evt.get("type") == "serve_marker":
+                logger.warning(f"Argon -> {evt.get('served_by')} ({evt.get('reason')}): "
+                               f"stream served by the fallback model")
+                yield argon_fallback.marker_frame(evt)
                 continue
             if evt.get("type") == "delta":
                 # generate_stream 现在是严格 append-only（不再发 _replace），delta 总是新增尾部
@@ -388,11 +409,29 @@ async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, atta
 
     if has_tools:
         # message_start 已发出，但还没发任何 content 块，此处重试是安全的。
-        async def _regenerate_for_tools() -> str:
-            r = await argon_fallback.generate(gemini_client, prompt, model, attachments,
-                                              is_argon=is_argon, thinking=thinking,
+        # 已经被 Flash 兜底过的请求不再重试 Argon（避免又吃一次 360s 超时）。
+        served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
+        retry_model = settings.argon_fallback_model if served else model
+        retry_is_argon = is_argon and not served
+
+        async def _regenerate_for_tools(nudge: str = "") -> str:
+            r = await argon_fallback.generate(gemini_client, prompt + nudge, retry_model, attachments,
+                                              is_argon=retry_is_argon, thinking=thinking,
                                               gem_id=gem_id, account_id=account_id)
             return r.get("text", "")
+
+        # Agent-loop guard: 只承诺不动手的回复会让 harness 结束回合，这里纠正一次。
+        guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
+            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True)))
+        try:
+            async for ping in sse_keepalive_during(guard_task):
+                yield ping
+        except BaseException:
+            guard_task.cancel()
+            if guard_task.done() and not guard_task.cancelled():
+                guard_task.exception()
+            raise
+        text, _stall_corrected = guard_task.result()
 
         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——message_start 已经发出、
         # 这条流早就开了，裸 await 会在已开的连接上制造一次远超单个 keepalive 间隔的

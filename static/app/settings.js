@@ -20,7 +20,8 @@ function getGroupTitle(groupKey) {
     account_management: 'settings.group.accounts',
     usage_stats: 'settings.group.stats',
     chat_cleanup: 'settings.group.chatCleanup',
-    logging: 'settings.group.logging'
+    logging: 'settings.group.logging',
+    argon: 'settings.group.argon'
   };
   return t(map[groupKey] || groupKey);
 }
@@ -56,19 +57,35 @@ function getFieldLabel(key) {
     chat_cleanup_keep_hours: 'settings.field.chatCleanupKeepHours',
     chat_cleanup_interval_hours: 'settings.field.chatCleanupInterval',
     chat_cleanup_skip_pinned: 'settings.field.chatCleanupSkipPinned',
-    log_bodies_enabled: 'settings.field.logBodiesEnabled'
+    log_bodies_enabled: 'settings.field.logBodiesEnabled',
+    argon_system_prompt_mode: 'settings.field.argonMode',
+    argon_timeout: 'settings.field.argonTimeout',
+    tool_loop_reminder: 'settings.field.toolLoopReminder',
+    tool_loop_stall_guard: 'settings.field.toolLoopGuard'
   };
   return map[key] ? (map[key].startsWith('settings.') ? t(map[key]) : map[key]) : key;
 }
 
 // Optional field-level hint explanations.
 const FIELD_HINTS = {
-  log_bodies_enabled: 'settings.hint.logBodies'
+  log_bodies_enabled: 'settings.hint.logBodies',
+  argon_system_prompt_mode: 'settings.hint.argonMode',
+  tool_loop_reminder: 'settings.hint.toolLoopReminder',
+  tool_loop_stall_guard: 'settings.hint.toolLoopGuard'
 };
 
 function getFieldHint(key) {
   return FIELD_HINTS[key] ? t(FIELD_HINTS[key]) : '';
 }
+
+// Enum-valued fields render as a select (typing a raw enum value by hand is how settings get broken).
+const SELECT_OPTIONS = {
+  argon_system_prompt_mode: [
+    { value: 'merge', labelKey: 'settings.mode.merge' },
+    { value: 'only_when_none', labelKey: 'settings.mode.onlyWhenNone' },
+    { value: 'replace', labelKey: 'settings.mode.replace' }
+  ]
+};
 
 const ROTATION_OPTIONS = [
   { value: 'round-robin', labelKey: 'settings.strategy.roundRobin' },
@@ -95,6 +112,14 @@ function createFieldInput(key, value) {
         <input type="checkbox" data-key="${key}" ${value ? 'checked' : ''}>
       </label>
     `;
+  }
+
+  const fieldName = String(key).split('.').pop();
+  if (SELECT_OPTIONS[fieldName]) {
+    const options = SELECT_OPTIONS[fieldName].map(opt =>
+      `<option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>${t(opt.labelKey)}</option>`
+    ).join('');
+    return `<select class="form-control" data-key="${key}">${options}</select>`;
   }
 
   if (key.endsWith('.rotation_strategy')) {
