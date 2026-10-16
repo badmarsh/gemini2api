@@ -12,6 +12,7 @@ from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import HTTPStatusError, UPSTREAM_ERRORS, classify_error
 from app.core import agent_loop, argon_fallback
+from app.core.regeneration_budget import RegenerationBudget
 from app.core.stream import split_into_chunks, iter_with_keepalive, SSE_KEEPALIVE_FRAME, sse_keepalive_during
 from app.models.claude import (
     ClaudeRequest, ClaudeResponse, ContentBlock, ClaudeUsage,
@@ -160,6 +161,7 @@ async def create_message(req: ClaudeRequest, request: Request):
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 
     if has_tools:
+        regeneration_budget = RegenerationBudget()
         served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
         retry_model = settings.argon_fallback_model if served else resolved_model
         retry_is_argon = is_argon and not served
@@ -172,8 +174,9 @@ async def create_message(req: ClaudeRequest, request: Request):
 
         # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
         text, _stall_corrected = await agent_loop.guard_tool_loop(
-            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True))
-        parsed = await parse_tool_response_with_retry(text, _regenerate_for_tools)
+            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True),
+            budget=regeneration_budget)
+        parsed = await parse_tool_response_with_retry(text, _regenerate_for_tools, budget=regeneration_budget)
         if parsed["type"] == "tool_calls":
             blocks = []
             for tc in parsed["tool_calls"]:
@@ -408,6 +411,7 @@ async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, atta
     })
 
     if has_tools:
+        regeneration_budget = RegenerationBudget()
         # message_start 已发出，但还没发任何 content 块，此处重试是安全的。
         # 已经被 Flash 兜底过的请求不再重试 Argon（避免又吃一次 360s 超时）。
         served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
@@ -422,7 +426,8 @@ async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, atta
 
         # Agent-loop guard: 只承诺不动手的回复会让 harness 结束回合，这里纠正一次。
         guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
-            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True)))
+            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True),
+            budget=regeneration_budget))
         try:
             async for ping in sse_keepalive_during(guard_task):
                 yield ping
@@ -436,7 +441,8 @@ async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, atta
         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——message_start 已经发出、
         # 这条流早就开了，裸 await 会在已开的连接上制造一次远超单个 keepalive 间隔的
         # 死寂（issue #10 followup F2）。用与上面 gen_task 相同的 task + keepalive 套路续心跳。
-        parse_task = asyncio.create_task(parse_tool_response_with_retry(text, _regenerate_for_tools))
+        parse_task = asyncio.create_task(parse_tool_response_with_retry(
+            text, _regenerate_for_tools, budget=regeneration_budget))
         try:
             async for ping in sse_keepalive_during(parse_task):
                 yield ping

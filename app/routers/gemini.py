@@ -10,6 +10,7 @@ from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import HTTPStatusError, UPSTREAM_ERRORS, classify_error
 from app.core import agent_loop, argon_fallback
+from app.core.regeneration_budget import RegenerationBudget
 from app.core.stream import split_into_chunks, iter_with_keepalive, sse_keepalive_during
 from app.models.gemini import (
     GeminiRequest,
@@ -245,6 +246,7 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
     # 工具调用：解析成 Gemini 原生 functionCall part（而非把工具 JSON 当文本塞回去）
     tool_parts = []
     if has_tools:
+        regeneration_budget = RegenerationBudget()
         served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
         retry_model = settings.argon_fallback_model if served else model
         retry_is_argon = is_argon and not served
@@ -258,8 +260,9 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
         # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
         response_text, _stall_corrected = await agent_loop.guard_tool_loop(
             response_text, _regenerate_for_tools,
-            enabled=getattr(settings, "tool_loop_stall_guard", True))
-        parsed = await parse_tool_response_with_retry(response_text, _regenerate_for_tools)
+            enabled=getattr(settings, "tool_loop_stall_guard", True), budget=regeneration_budget)
+        parsed = await parse_tool_response_with_retry(response_text, _regenerate_for_tools,
+                                                      budget=regeneration_budget)
         if isinstance(parsed, dict):
             if parsed.get("type") == "tool_calls":
                 for tc in parsed["tool_calls"]:
@@ -396,6 +399,7 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                 # 必须改用**重试的那段文本**——否则会把首次那段畸形 JSON 原样流给客户端，
                 # 比修复前（只发降级提示）更糟。未发生重试时 _retried 为空，行为逐字节不变。
                 _retried = {}
+                regeneration_budget = RegenerationBudget()
 
                 _served = (result.get("argon_fallback") or {}).get("served_by") if isinstance(result, dict) else None
                 _retry_model = settings.argon_fallback_model if _served else model
@@ -411,7 +415,8 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                 # Agent-loop guard (NDJSON stream: reuse the blank-line keepalive rhythm).
                 guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
                     response_text, _regenerate_for_tools,
-                    enabled=getattr(settings, "tool_loop_stall_guard", True)))
+                    enabled=getattr(settings, "tool_loop_stall_guard", True),
+                    budget=regeneration_budget))
                 try:
                     async for _ping in sse_keepalive_during(guard_task):
                         yield "\n"
@@ -428,7 +433,8 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                 # 死寂（issue #10 followup F2）。同上面 gen_task 一样用 task + keepalive 续心跳；
                 # NDJSON 不能用 SSE 注释帧，沿用同款裸换行（丢弃 ping 的实际内容只借它的节奏）。
                 parse_task = asyncio.create_task(
-                    parse_tool_response_with_retry(response_text, _regenerate_for_tools)
+                    parse_tool_response_with_retry(response_text, _regenerate_for_tools,
+                                                   budget=regeneration_budget)
                 )
                 try:
                     async for _ping in sse_keepalive_during(parse_task):

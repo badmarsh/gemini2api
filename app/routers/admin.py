@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from app.config import APP_VERSION, mask_secret, settings
 from app.core.account_pool import account_pool, AccountStatus
-from app.core import agent_loop, argon_breaker
+from app.core import agent_loop, argon_breaker, regeneration_budget
 from app.core.gemini_client import GeminiWebClient, count_argon_salvaged_results
 
 logger = logging.getLogger(__name__)
@@ -106,6 +106,7 @@ async def admin_status():
     status["agent_loop"]["tool_loop_reminder"] = bool(getattr(settings, "tool_loop_reminder", True))
     status["agent_loop"]["stall_guard"] = bool(getattr(settings, "tool_loop_stall_guard", True))
     status["agent_loop"]["salvaged_empty_streams"] = count_argon_salvaged_results()
+    status["regenerations"] = regeneration_budget.stats()
     status["agent_loop"]["fallback_model"] = settings.argon_fallback_model
     return status
 

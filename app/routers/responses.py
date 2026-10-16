@@ -13,6 +13,7 @@ from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES
 from app.core.fallback import is_empty_result, is_blank_answer, EMPTY_RESPONSE_MESSAGE
 from app.core import agent_loop, argon_fallback
+from app.core.regeneration_budget import RegenerationBudget
 from app.core.responses_protocol import (
     parse_responses_input, build_responses_object, new_response_id, ResponsesStreamEncoder,
 )
@@ -50,7 +51,7 @@ def _normalize_tool_choice_for_prompt(tool_choice):
     return tool_choice
 
 
-async def _build_output_items(text: str, has_tools: bool, regenerate=None) -> tuple[list[dict], str]:
+async def _build_output_items(text: str, has_tools: bool, regenerate=None, budget=None) -> tuple[list[dict], str]:
     """把模型原始回复文本组装成 Responses output 数组。返回 (output_items, 剩余文本估算用)。
 
     ``regenerate`` 为可选的「重新取一次模型文本」闭包：工具调用 JSON 畸形时用它重试
@@ -58,7 +59,7 @@ async def _build_output_items(text: str, has_tools: bool, regenerate=None) -> tu
     """
     output = []
     if has_tools:
-        parsed = await parse_tool_response_with_retry(text, regenerate)
+        parsed = await parse_tool_response_with_retry(text, regenerate, budget=budget)
         if parsed["type"] == "tool_calls":
             for tc in parsed["tool_calls"]:
                 output.append({
@@ -195,11 +196,13 @@ async def create_response(request: Request):
                                           gem_id=gem_id, account_id=gem_account_id)
         return r.get("text", "")
 
+    regeneration_budget = RegenerationBudget() if has_tools else None
     if has_tools:
         # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
         text, _stall_corrected = await agent_loop.guard_tool_loop(
-            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True))
-    output, _ = await _build_output_items(text, has_tools, _regenerate_for_tools)
+            text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True),
+            budget=regeneration_budget)
+    output, _ = await _build_output_items(text, has_tools, _regenerate_for_tools, regeneration_budget)
     thoughts = result.get("thoughts") or ""
     if thoughts:
         output = [{"type": "reasoning", "id": new_response_id().replace("resp_", "rs_"),
@@ -289,9 +292,11 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
             return r.get("text", "")
 
         if has_tools:
+            regeneration_budget = RegenerationBudget()
             # Agent-loop guard: a promise-only reply would end the harness' turn; corrected once.
             guard_task = asyncio.create_task(agent_loop.guard_tool_loop(
-                text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True)))
+                text, _regenerate_for_tools, enabled=getattr(settings, "tool_loop_stall_guard", True),
+                budget=regeneration_budget))
             try:
                 async for ping in sse_keepalive_during(guard_task):
                     yield ping
@@ -305,7 +310,8 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——这条流早就开了（created/
         # in_progress/keepalive 已发），裸 await 会在已开的连接上制造一次远超单个 keepalive
         # 间隔的死寂（issue #10 followup F2）。用与上面 gen_task 相同的 task + keepalive 续心跳。
-        build_task = asyncio.create_task(_build_output_items(text, has_tools, _regenerate_for_tools))
+        build_task = asyncio.create_task(_build_output_items(
+            text, has_tools, _regenerate_for_tools, regeneration_budget if has_tools else None))
         try:
             async for ping in sse_keepalive_during(build_task):
                 yield ping

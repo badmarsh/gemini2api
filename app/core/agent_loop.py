@@ -97,15 +97,24 @@ def looks_like_stall(text: str) -> bool:
     return bool(_PROMISE_RE.search(stripped))
 
 
-async def guard_tool_loop(text: str, regenerate, *, enabled: bool = True) -> tuple[str, bool]:
+async def guard_tool_loop(text: str, regenerate, *, enabled: bool = True, budget=None) -> tuple[str, bool]:
     """Return ``(text, corrected)``, asking the model once more when it stalled on a promise.
 
     ``regenerate(nudge)`` must re-run the upstream call with ``nudge`` appended to the prompt. Any failure
     (exception, empty reply, still no tool call) keeps the original text: this guard may never turn a
     graceful answer into an error. Disabled, or nothing to correct → the input is returned untouched.
+    ``budget`` is shared with the malformed-JSON parser so the two safeguards allow only one regeneration
+    per logical turn.
     """
     global _stalls_seen, _stalls_corrected
     if not enabled or regenerate is None or not looks_like_stall(text):
+        return text, False
+
+    if budget is None:
+        from app.core.regeneration_budget import RegenerationBudget
+        budget = RegenerationBudget()
+    if not budget.try_consume("guard"):
+        logger.warning("Agent-loop correction skipped: the per-turn regeneration budget is exhausted")
         return text, False
 
     with _lock:
