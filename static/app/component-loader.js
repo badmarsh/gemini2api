@@ -61,13 +61,20 @@ async function insertComponent(componentPath, container, position = 'beforeend',
                         <i class="fas fa-exclamation-triangle" style="font-size: 2.5rem; color: var(--warning-color, #f59e0b); margin-bottom: 1rem;"></i>
                         <h3 style="margin-bottom: 0.5rem; color: var(--text-primary, #f8fafc);">Section Unavailable</h3>
                         <p style="color: var(--text-secondary, #94a3b8); font-size: 0.875rem; margin-bottom: 1.5rem;">Failed to load template for ${fallbackSectionId}. Other sections remain operational.</p>
-                        <button class="btn btn-primary btn-sm" onclick="window.app?.retrySectionLoad?.('${fallbackSectionId}', '${componentPath}')">
+                        <button class="btn btn-primary btn-sm" data-retry-section="${fallbackSectionId}">
                             <i class="fas fa-redo"></i> Retry
                         </button>
                     </div>
                 </section>
             `;
             containerElement.insertAdjacentHTML(position, fallbackHtml);
+            const retryBtn = containerElement.querySelector(`[data-retry-section="${fallbackSectionId}"]`);
+            if (retryBtn) {
+                retryBtn.addEventListener('click', () => {
+                    componentCache.clear();
+                    window.location.reload();
+                });
+            }
         } else {
             throw err;
         }

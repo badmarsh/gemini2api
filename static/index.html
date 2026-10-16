@@ -10,10 +10,15 @@
     <link rel="stylesheet" href="app/base.css?v=5">
     <link rel="stylesheet" href="app/mobile.css?v=3">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script type="module">
-        import { getCurrentTheme } from './app/theme-switcher.js';
-        const theme = getCurrentTheme();
-        if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    <script>
+        // Classic (blocking) script on purpose: module scripts are deferred and cause a flash of the light theme.
+        (function () {
+            try {
+                var saved = localStorage.getItem('gemini2api_theme');
+                var dark = saved ? saved === 'dark' : (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+                if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+            } catch (e) {}
+        })();
     </script>
 </head>
 <body>

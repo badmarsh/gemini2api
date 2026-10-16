@@ -1088,9 +1088,12 @@ async function sendPlaygroundRequest() {
 }
 
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text == null ? '' : text;
-    return div.innerHTML;
+    return String(text == null ? '' : text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 // Double-quote attribute escaping: escapeHtml does not escape ASCII double quotes;
@@ -1107,16 +1110,16 @@ function _pgRenderContent(text) {
     // 1) Markdown images: ![alt](url)
     s = s.replace(/!\[[^\]]*\]\((data:image\/[^)]+|https?:\/\/[^)\s]+)\)/g, (m, url) => {
         const i = imgs.push(url) - 1;
-        return ` IMG${i} `;
+        return `\u0000IMG${i}\u0000`;
     });
     // 2) Standalone data:image or /images/ URL
     s = s.replace(/(data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+)/g, (m, url) => {
         const i = imgs.push(url) - 1;
-        return ` IMG${i} `;
+        return `\u0000IMG${i}\u0000`;
     });
     s = s.replace(/(https?:\/\/[^\s)]+\/images\/[^\s)]+\.(?:png|jpg|jpeg|webp|gif))/gi, (m, url) => {
         const i = imgs.push(url) - 1;
-        return ` IMG${i} `;
+        return `\u0000IMG${i}\u0000`;
     });
     // Escape remaining text and restore <img> tags
     let html = escapeHtml(s);
@@ -1124,7 +1127,7 @@ function _pgRenderContent(text) {
 // Security: URL comes from model output (untrusted). Validate protocol http(s)/data:image
 // and escape attributes using escapeAttr to prevent XSS.
         const safeUrl = /^(https?:|data:image\/)/i.test(url) ? escapeAttr(url) : '';
-        html = html.replace(` IMG${i} `,
+        html = html.replace(`\u0000IMG${i}\u0000`,
             `<img src="${safeUrl}" class="chat-img" alt="generated image">`);
     });
     return html;
@@ -1498,6 +1501,13 @@ window.app = {
         }
     },
     retrySectionLoad(sectionId) {
+        // A section whose template failed to load is only an error placeholder; reloading its data
+        // cannot help. Re-fetch the whole shell so the template and its event bindings come back.
+        const el = document.getElementById(sectionId);
+        if (el && el.classList.contains('error-boundary-section')) {
+            window.location.reload();
+            return;
+        }
         loadSectionData(sectionId);
     }
 };

@@ -56,8 +56,12 @@ export class ChatService {
         onError = () => {}
     }) {
         this.abortCurrentStream();
-        this._currentAbortController = new AbortController();
-        const signal = this._currentAbortController.signal;
+        // Keep a local reference: a late `finally` of an aborted older call must not wipe the
+        // controller of the newer stream (that made Stop/clear unable to cancel it).
+        const controller = new AbortController();
+        this._currentAbortController = controller;
+        const signal = controller.signal;
+        let idleTimer = null;
 
         const payload = {
             model,
@@ -82,10 +86,14 @@ export class ChatService {
         }
 
         const timeoutTimer = setTimeout(() => {
-            if (this._currentAbortController) {
-                this._currentAbortController.abort(new Error(`Stream request timed out after ${APP_CONSTANTS.TIMEOUTS.STREAM_DEFAULT / 1000}s`));
-            }
+            controller.abort(new Error(`Stream request timed out after ${APP_CONSTANTS.TIMEOUTS.STREAM_DEFAULT / 1000}s`));
         }, APP_CONSTANTS.TIMEOUTS.STREAM_DEFAULT);
+        const armIdle = () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+                controller.abort(new Error(`Stream stalled: no data for ${APP_CONSTANTS.TIMEOUTS.STREAM_IDLE / 1000}s`));
+            }, APP_CONSTANTS.TIMEOUTS.STREAM_IDLE);
+        };
 
         try {
             const resp = await fetch(APP_CONSTANTS.ROUTES.CHAT_COMPLETIONS, {
@@ -109,9 +117,11 @@ export class ChatService {
             let fullText = '';
             let fullReasoning = '';
 
+            armIdle();
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
+                armIdle();
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
@@ -126,10 +136,14 @@ export class ChatService {
                         return { content: fullText, reasoning: fullReasoning };
                     }
 
-                    if (trimmed.startsWith('data: ')) {
-                        const jsonStr = trimmed.slice(6);
+                    if (trimmed.startsWith('data:')) {
+                        const jsonStr = trimmed.slice(5).trimStart();
+                        let streamError = null;
                         try {
                             const parsed = JSON.parse(jsonStr);
+                            if (parsed && parsed.error) {
+                                streamError = new Error(parsed.error.message || 'Upstream error during stream');
+                            }
                             const delta = parsed.choices?.[0]?.delta;
                             if (delta) {
                                 // Extract reasoning / thinking block
@@ -149,6 +163,7 @@ export class ChatService {
                         } catch (_) {
                             // Non-fatal parse warning during partial streaming
                         }
+                        if (streamError) throw streamError; // surface mid-stream errors instead of an empty answer
                     }
                 }
             }
@@ -164,7 +179,11 @@ export class ChatService {
             }
             throw err;
         } finally {
-            this._currentAbortController = null;
+            clearTimeout(timeoutTimer);
+            clearTimeout(idleTimer);
+            if (this._currentAbortController === controller) {
+                this._currentAbortController = null;
+            }
         }
     }
 }

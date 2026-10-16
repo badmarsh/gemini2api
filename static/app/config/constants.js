@@ -16,7 +16,8 @@ export const APP_CONSTANTS = deepFreeze({
     VERSION: '1.7.1',
     TIMEOUTS: {
         API_DEFAULT: 30000,       // 30s timeout for standard REST
-        STREAM_DEFAULT: 180000,   // 180s timeout for streaming / deep reasoning
+        STREAM_DEFAULT: 180000,   // 180s to first byte for streaming / deep reasoning
+        STREAM_IDLE: 120000,      // 120s without any chunk/keep-alive aborts a stalled stream
         HEALTH_CHECK: 10000,      // 10s timeout for health checks
         POLL_LOGS: 2500,          // 2.5s structured logs polling
         SESSION_IDLE: 300000,     // 5m idle session timeout

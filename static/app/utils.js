@@ -160,10 +160,14 @@ function showToast(message, type = 'info') {
  * @returns {string}
  */
 function escapeHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    // Escapes quotes as well, so the result is safe in text AND in "..." / '...' attributes.
+    if (str === null || str === undefined || str === '') return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 /**

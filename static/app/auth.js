@@ -111,7 +111,7 @@ async function apiCall(method, path, body = null, options = {}) {
             clearTimeout(timeoutId);
             throw new Error('Request was aborted');
         }
-        options.signal.addEventListener('abort', () => controller.abort());
+        options.signal.addEventListener('abort', () => controller.abort(options.signal.reason), { once: true });
     }
 
     const config = {
@@ -191,7 +191,8 @@ async function initAuth() {
 async function login(apiKey) {
     try {
         saveToken(apiKey);
-        await apiCall('GET', APP_CONSTANTS.ROUTES.HEALTH, null, { timeout: APP_CONSTANTS.TIMEOUTS.HEALTH_CHECK });
+        // /health is public and accepts any key; verify against an authenticated admin route instead.
+        await apiCall('GET', APP_CONSTANTS.ROUTES.ADMIN_VERIFY, null, { timeout: APP_CONSTANTS.TIMEOUTS.HEALTH_CHECK });
         return { success: true };
     } catch (error) {
         clearToken();
