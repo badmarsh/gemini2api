@@ -198,7 +198,7 @@ export class CanvasEngine {
         if (type === 'svg') {
             return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:2rem;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f172a;}svg{max-width:90vw;max-height:85vh;height:auto;}</style></head><body>${code}</body></html>`;
         }
-        const bridge = '<script>(function(){const oL=console.log,oE=console.error,oW=console.warn;function s(t,a){try{const m=Array.from(a).map(x=>typeof x==='object'?JSON.stringify(x):String(x)).join(' ');window.parent.postMessage({source:'canvas-sandbox',type:t,message:m},'*');}catch(e){}}console.log=function(){s('log',arguments);oL.apply(console,arguments);};console.warn=function(){s('warn',arguments);oW.apply(console,arguments);};console.error=function(){s('error',arguments);oE.apply(console,arguments);};window.onerror=function(m,u,l){s('error',[m+' (line '+l+')']);};})();<\/script>';
+        const bridge = `<script>(function(){const oL=console.log,oE=console.error,oW=console.warn;function s(t,a){try{const m=Array.from(a).map(x=>typeof x==="object"?JSON.stringify(x):String(x)).join(" ");window.parent.postMessage({source:"canvas-sandbox",type:t,message:m},"*");}catch(e){}}console.log=function(){s("log",arguments);oL.apply(console,arguments);};console.warn=function(){s("warn",arguments);oW.apply(console,arguments);};console.error=function(){s("error",arguments);oE.apply(console,arguments);};window.onerror=function(m,u,l){s("error",[m+" (line "+l+")"]);};})();<\/script>`;
         if (code.includes('<html') || code.includes('<!DOCTYPE')) {
             return code.replace('<head>', '<head>' + bridge);
         }

@@ -18,6 +18,7 @@ import { safeStorage } from './services/storageService.js';
 import { validateAccountPayload } from './services/validationService.js';
 import { accountService } from './services/accountService.js';
 import { telemetryService } from './services/telemetryService.js';
+import { CanvasEngine } from './canvas-engine.js';
 
 let isAppInitialized = false;
 
@@ -862,6 +863,57 @@ function _pgSetSendBusy(busy) {
     else pgSend.removeAttribute('aria-busy');
 }
 
+let _canvasEngine = null;
+
+function _getCanvasEngine() {
+    if (!_canvasEngine) {
+        const root = document.getElementById('pg-canvas-root');
+        if (root) {
+            _canvasEngine = new CanvasEngine({ container: root });
+            _canvasEngine.render();
+        }
+    }
+    return _canvasEngine;
+}
+
+function _pgAttachArtifactCards(container, content) {
+    if (!content) return;
+    const artifacts = CanvasEngine.extractArtifacts(content);
+    if (!artifacts || artifacts.length === 0) return;
+
+    const engine = _getCanvasEngine();
+    if (engine) {
+        engine.loadArtifact(artifacts[artifacts.length - 1]);
+    }
+
+    artifacts.forEach(art => {
+        const card = document.createElement('div');
+        card.className = 'chat-artifact-card';
+        const iconClass = art.type === 'svg' ? 'bezier-curve' : (art.type === 'mermaid' ? 'project-diagram' : (art.type === 'js' ? 'code' : 'cube'));
+        card.innerHTML = `
+            <div class="chat-artifact-info">
+                <i class="fas fa-${iconClass}"></i>
+                <div>
+                    <div class="chat-artifact-title">${escapeHtml(art.title)}</div>
+                    <div class="chat-artifact-subtitle">${escapeHtml(art.lang || art.type)} • Click to inspect in Canvas</div>
+                </div>
+            </div>
+            <button class="btn btn-sm btn-outline"><i class="fas fa-play"></i> Open</button>
+        `;
+        card.addEventListener('click', () => {
+            const ce = _getCanvasEngine();
+            if (ce) {
+                ce.loadArtifact(art);
+                const split = document.getElementById('playground-split-container');
+                if (split && !split.classList.contains('has-canvas')) {
+                    document.getElementById('pg-mode-studio')?.click();
+                }
+            }
+        });
+        container.appendChild(card);
+    });
+}
+
 let _pgAbortController = null;
 
 async function sendPlaygroundRequest() {
@@ -1069,6 +1121,7 @@ async function sendPlaygroundRequest() {
             aiBubble.textContent = t('playground.noContent');
         } else {
             aiBubble.innerHTML = _pgRenderContent(outcome.content);
+            _pgAttachArtifactCards(aiBubble, outcome.content);
             chatContainer.scrollTop = chatContainer.scrollHeight;
             _pgMessages.push({ role: 'assistant', content: outcome.content });
             while (_pgMessages.length > (typeof APP_CONSTANTS !== 'undefined' ? APP_CONSTANTS.LIMITS.MAX_RING_BUFFER_MESSAGES : 200)) {
@@ -1148,6 +1201,11 @@ function clearPlayground() {
     _pgMessages = [];
     _pgImages = [];
     _renderPgImagePreview();
+    if (_canvasEngine) {
+        _canvasEngine.currentArtifact = null;
+        _canvasEngine.logs = [];
+        _canvasEngine.render();
+    }
 }
 
 function _renderPgImagePreview() {
@@ -1371,6 +1429,33 @@ function initEventListeners() {
     const pgClear = document.getElementById('pg-clear-btn');
     if (pgClear) {
         pgClear.addEventListener('click', clearPlayground);
+    }
+
+    // Playground Studio mode selector
+    const modeStudio = document.getElementById('pg-mode-studio');
+    const modeChat = document.getElementById('pg-mode-chat');
+    const splitContainer = document.getElementById('playground-split-container');
+    if (modeStudio && modeChat && splitContainer) {
+        modeStudio.addEventListener('click', () => {
+            modeStudio.classList.add('active', 'btn-primary');
+            modeStudio.classList.remove('btn-outline');
+            modeChat.classList.remove('active', 'btn-primary');
+            modeChat.classList.add('btn-outline');
+            splitContainer.classList.add('has-canvas');
+            const ce = _getCanvasEngine();
+            if (ce && !ce.currentArtifact) {
+                ce.render();
+            }
+        });
+        modeChat.addEventListener('click', () => {
+            modeChat.classList.add('active', 'btn-primary');
+            modeChat.classList.remove('btn-outline');
+            modeStudio.classList.remove('active', 'btn-primary');
+            modeStudio.classList.add('btn-outline');
+            splitContainer.classList.remove('has-canvas');
+        });
+        // Initialize Canvas Engine on startup if container is present
+        _getCanvasEngine();
     }
 
     // Playground image upload
