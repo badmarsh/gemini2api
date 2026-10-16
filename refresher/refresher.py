@@ -102,6 +102,15 @@ def refresh_account(browser, account):
             print(f"  [{label}] FAILED - Session expired, redirected to login ({page.url[:60]})")
             return {"id": account_id, "label": label, "status": "expired", "updated_at": time.time()}
 
+        # Gemini serves a signed-OUT landing page at /app (no redirect to the login page), so a
+        # URL check alone reports success for cookies Google did not accept - the injected cookies
+        # then simply read back unchanged. A signed-in page carries the SNlM0e token (the same
+        # marker gemini2api itself mints its session from); the guest page does not.
+        if '"SNlM0e"' not in page.content():
+            print(f"  [{label}] NOT SIGNED IN - Gemini served the signed-out page ({page.url[:60]}); "
+                  "the browser did not accept the injected cookies. Not pushing them to gemini2api.")
+            return {"id": account_id, "label": label, "status": "signed_out", "updated_at": time.time()}
+
         cookies = context.cookies()
         psid = next((c["value"] for c in cookies if c["name"] == "__Secure-1PSID"), None)
         psidts = next((c["value"] for c in cookies if c["name"] == "__Secure-1PSIDTS"), None)

@@ -73,12 +73,10 @@ _PRELUDE = textwrap.dedent("""
     function renderModelsList(s) { _calls.push('models:' + s.size); }
     function updatePlaygroundModels(s) { _calls.push('pg:' + s.size); }
     function startUptimeTimer(s) { _calls.push('uptime:' + s); }
-    async function loadQrCards() { _calls.push('qr'); }
     function handleCheckUpdate() {}
     function checkForUpdate() {}
     let _dashboardLoading = false;
     let _dashboardLastLoadAt = 0;
-    let _dashboardQrLoaded = false;
     function loadSectionData() { _calls.push('reload'); }
 
     const telemetryService = {
@@ -163,7 +161,7 @@ def test_all_good_renders_everything_and_no_error_notice(tmp_path):
     assert out["texts"]["stat-total"] == "2" and out["texts"]["stat-active"] == "1"
     assert out["texts"]["stat-requests"] == "5" and out["texts"]["stat-models"] == "2"
     assert out["texts"]["sys-version"] == "v9.9"
-    assert {"grid:2", "uptime:42", "qr"} <= set(out["calls"])
+    assert {"grid:2", "uptime:42"} <= set(out["calls"])
 
 
 @_needs_node
@@ -193,11 +191,10 @@ def test_both_failing_still_reaches_the_section_error_boundary(tmp_path):
 
 
 @_needs_node
-def test_background_refresh_never_throws_and_skips_the_qr_reload(tmp_path):
+def test_background_refresh_never_throws(tmp_path):
     out = _run(_RUN_BODY, {"statusFail": "status down", "sysFail": "sys down", "opts": {"background": True}}, tmp_path)
     assert out["threw"] == ""
     assert sorted(out["errors"]) == ["dashboard-card-error-status", "dashboard-card-error-system"]
-    assert "qr" not in out["calls"]
 
 
 @_needs_node
@@ -253,3 +250,28 @@ def test_auto_refresh_is_started_from_init():
 def test_new_i18n_keys_exist_in_all_five_languages(key):
     text = _I18N_JS.read_text(encoding="utf-8")
     assert len(re.findall(rf"^\s*'{re.escape(key)}':", text, re.M)) == 5
+
+
+# ---- markup / script drift guard ------------------------------------------------------------
+
+_DASH_HTML = _ROOT / "static" / "components" / "section-dashboard.html"
+
+
+def test_every_id_the_dashboard_script_fills_exists_in_the_markup():
+    html = _DASH_HTML.read_text(encoding="utf-8")
+    ids = set(re.findall(r'id="([^"]+)"', html))
+    src = _APP_JS.read_text(encoding="utf-8")
+    body = _extract_function(src, "loadDashboard") + _extract_function(src, "applySystemInfo")
+    body += _extract_function(src, "startUptimeTimer")
+    targets = set(re.findall(r"setText\('([^']+)'", body))
+    assert targets, "no setText targets found - the extraction is broken"
+    assert targets <= ids, f"script writes to ids missing from the markup: {sorted(targets - ids)}"
+
+
+def test_dashboard_has_no_sponsor_qr_or_lightbox_leftovers():
+    html = _DASH_HTML.read_text(encoding="utf-8")
+    css = (_ROOT / "static" / "components" / "section-dashboard.css").read_text(encoding="utf-8")
+    src = _APP_JS.read_text(encoding="utf-8")
+    for needle in ("qr", "lightbox", "Lightbox"):
+        assert needle not in html and needle not in css, needle
+    assert "loadQrCards" not in src and "openLightbox" not in src

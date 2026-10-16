@@ -189,8 +189,7 @@ async function loadDashboard(opts) {
     _dashboardLoading = true;
     try {
         // The requests are independent: run them in parallel, and let one failing leave the
-        // other card group intact. QR cards are static, so a background refresh skips them.
-        const qrPromise = background ? Promise.resolve() : loadQrCards();
+        // other card group intact.
         const [statusRes, sysRes] = await Promise.allSettled([
             telemetryService.getAdminStatus(),
             telemetryService.getSystemInfo(),
@@ -224,21 +223,18 @@ async function loadDashboard(opts) {
             const strategyMap = { 'round-robin': t('settings.strategy.roundRobin'), 'least-used': t('settings.strategy.leastUsed'), 'failover': t('settings.strategy.failover') };
             setText('info-strategy', strategyMap[data.strategy] || data.strategy);
             setText('info-concurrent', data.max_concurrent_per_account || '-');
-            setText('info-total-accounts', accounts.length);
-            setText('info-active-accounts', activeCount);
 
             renderAccountStatusGrid(accounts);
             renderModelsList(modelsSet);
             updatePlaygroundModels(modelsSet);
         }
         if (view.sys) applySystemInfo(view.sys);
-        await qrPromise;
 
-        // Bind and auto-check update button (must be after DOM is loaded)
+        // Check for an update once, on the first dashboard load. The click handler is bound in
+        // initEventListeners; binding it here as well made every click run it twice.
         const updateBtn = document.getElementById('checkUpdateBtn');
-        if (updateBtn && !updateBtn._bound) {
-            updateBtn._bound = true;
-            updateBtn.addEventListener('click', handleCheckUpdate);
+        if (updateBtn && !updateBtn._autoChecked) {
+            updateBtn._autoChecked = true;
             checkForUpdate();
         }
     } finally {
@@ -305,62 +301,17 @@ async function requestRestart(call) {
 
 function applySystemInfo(data) {
     setText('sys-version', 'v' + data.version);
-    setText('sys-ver-detail', 'v' + data.version);
     setText('sys-python', data.python_version);
     setText('sys-time', data.server_time);
     setText('sys-os', data.os);
     setText('sys-memory', data.memory_usage + ' MB / ' + data.memory_total + ' MB');
     setText('sys-cpu', data.cpu_percent + '%');
     setText('sys-mode', data.run_mode);
-    setText('sys-pid', data.pid);
     const restartBtnEl = document.getElementById('restartBtn');
     if (restartBtnEl) restartBtnEl.style.display = restartButtonVisible(data) ? '' : 'none';
     if (data.uptime_seconds !== undefined) {
         startUptimeTimer(data.uptime_seconds);
     }
-}
-
-const QR_REMOTE_BASE = '/api-assets';
-
-async function loadQrCards() {
-    const container = document.getElementById('qrCardsContainer');
-    if (!container) return;
-    try {
-        const resp = await fetch(`${QR_REMOTE_BASE}/qr-config.json`);
-        if (!resp.ok) return;
-        const config = await resp.json();
-        // Security: qr-config.json may come from external sources; escape title/description/image
-        container.innerHTML = (config.cards || []).map(card => `
-            <div class="qr-card">
-                <p class="qr-title">${escapeHtml(card.title)}</p>
-                <img src="${QR_REMOTE_BASE}/${encodeURIComponent(String(card.image ?? ''))}" alt="${escapeAttr(card.title)}" class="qr-img" onclick="window.app.openLightbox(this.src)">
-                <p class="qr-desc">${escapeHtml(card.description)}</p>
-            </div>
-        `).join('');
-    } catch (e) {
-        console.error('Failed to load QR configuration:', e);
-    }
-}
-
-function openLightbox(src) {
-    const overlay = document.getElementById('lightboxOverlay');
-    const img = document.getElementById('lightboxImage');
-    if (overlay && img) {
-        img.src = src;
-        overlay.classList.add('active');
-    }
-}
-
-function closeLightbox() {
-    const overlay = document.getElementById('lightboxOverlay');
-    if (overlay) overlay.classList.remove('active');
-}
-
-function initLightbox() {
-    const overlay = document.getElementById('lightboxOverlay');
-    const closeBtn = document.getElementById('lightboxClose');
-    if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLightbox(); });
-    if (closeBtn) closeBtn.addEventListener('click', closeLightbox);
 }
 
 // Health badge on account card (pure function).
@@ -435,7 +386,7 @@ function renderAccountStatusGrid(accounts) {
     if (!container) return;
 
     if (accounts.length === 0) {
-        container.innerHTML = '<div class="empty-state"><i class="fas fa-server"></></div>';
+        container.innerHTML = `<div class="empty-state"><i class="fas fa-server"></i> ${escapeHtml(t('accounts.noAccounts'))}</div>`;
         return;
     }
 
@@ -1563,7 +1514,6 @@ async function initApp() {
     initSettings();
     initApiKeys();
     initGems();
-    initLightbox();
     startDashboardAutoRefresh();
 }
 
@@ -1578,7 +1528,6 @@ window.app = {
     sendPlaygroundRequest,
     clearPlayground,
     copyModel,
-    openLightbox,
     reloadCurrentSection() {
         const activeSection = document.querySelector('.section.active');
         if (activeSection) {

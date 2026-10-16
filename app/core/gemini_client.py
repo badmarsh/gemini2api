@@ -178,6 +178,44 @@ GEMINI_HOME_URL = "https://gemini.google.com/?hl=en"
 GEMINI_APP_EN_URL = "https://gemini.google.com/app?hl=en"
 GOOGLE_HOME_URL = "https://www.google.com/"
 ROTATE_COOKIES_URL = "https://accounts.google.com/RotateCookies"
+
+
+def classify_missing_token(final_url: str, status: int, body: str) -> tuple[str, str]:
+    """Say why the gemini.google.com page carried no SNlM0e token.
+
+    The old check looked for the substring "accounts.google.com" anywhere in the body and called
+    that "Cookie expired". A perfectly valid Gemini page links to accounts.google.com (account
+    switcher, sign-out), so a missing token on a normal page was reported as an expired cookie even
+    though the session was fine. Only the *final URL* tells where Google sent us, so classify on
+    that and report what was actually seen (host/path, status, size, title - never cookie values).
+    Returns (kind, message); kind is one of login / consent / challenge / short / no_token.
+    """
+    from urllib.parse import urlsplit
+
+    body = body or ""
+    try:
+        parts = urlsplit(final_url or "")
+        host, path = (parts.hostname or "").lower(), parts.path or ""
+    except ValueError:
+        host, path = "", ""
+    title_m = re.search(r"<title[^>]*>(.*?)</title>", body, re.I | re.S)
+    title = re.sub(r"\s+", " ", title_m.group(1)).strip()[:80] if title_m else ""
+    where = f"final={host or '?'}{path or '/'} HTTP {status}, {len(body)} bytes"
+    if title:
+        where += f", title={title!r}"
+
+    if host == "accounts.google.com" or "ServiceLogin" in path or path.rstrip("/").endswith("/signin"):
+        return "login", "Cookie expired - redirected to Google login page"
+    if host.startswith("consent."):
+        return "consent", f"Google consent page instead of Gemini ({where}) - not an expired cookie"
+    if path.startswith("/sorry"):
+        return "challenge", f"Google bot/rate-limit challenge ({where}) - not an expired cookie"
+    if len(body) < 1000:
+        return "short", f"Invalid response (body too short: {len(body)} bytes; {where})"
+    return "no_token", (
+        f"SNlM0e token not found ({where}) - the page loaded but this cookie pair was not "
+        "recognised as a signed-in session (rejected, or the page layout changed)"
+    )
 GENERATE_URL = (
     "https://gemini.google.com/_/BardChatUi/data/"
     "assistant.lamda.BardFrontendService/StreamGenerate"
@@ -921,12 +959,9 @@ class GeminiWebClient:
                 logger.info("Session token acquired")
             else:
                 self._session_token = ""
-                if "accounts.google.com" in body or "ServiceLogin" in body:
-                    msg = "Cookie expired - redirected to Google login page"
-                elif len(body) < 1000:
-                    msg = f"Invalid response (body too short: {len(body)} bytes)"
-                else:
-                    msg = "SNlM0e token not found (cookie may be invalid or expired)"
+                _kind, msg = classify_missing_token(
+                    str(getattr(resp, "url", "") or ""), resp.status_code, body
+                )
                 logger.error(msg)
                 self._last_reload_error = msg
                 return
@@ -977,7 +1012,11 @@ class GeminiWebClient:
                 return True
 
             resp_text = resp.text[:200] if resp.text else "(empty)"
-            logger.warning(f"RotateCookies 200 but no new PSIDTS. Response: {resp_text}")
+            if "identity.hfcr" in resp_text:
+                # Google's high-frequency-rotation limit: "rotate again later", not "cookie dead".
+                logger.info(f"RotateCookies throttled by Google (identity.hfcr); PSIDTS kept. Response: {resp_text}")
+            else:
+                logger.warning(f"RotateCookies 200 but no new PSIDTS. Response: {resp_text}")
             live_metrics.record_rotation(False)
             return False
         except Exception as e:

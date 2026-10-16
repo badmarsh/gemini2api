@@ -29,6 +29,7 @@ async def test_update_account_cookies_failure_persists_when_persist_true():
     account = Account(id="acc-test-fail", psid="old-psid", psidts="old-psidts")
     account.client = MagicMock()
     account.client.reload_cookies = AsyncMock(return_value={"success": False, "error": "rate limit"})
+    account.client.is_healthy = False  # nothing working to protect: keep what the caller submitted
 
     with patch("app.routers.admin.account_pool") as mock_pool:
         mock_pool.accounts = [account]
@@ -60,6 +61,29 @@ async def test_update_account_cookies_failure_does_not_persist_when_persist_fals
         assert resp.status_code == 503
         assert account.psid == "old-psid"
         assert account.psidts == "old-psidts"
+        mock_pool._save_to_file.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failed_reload_keeps_stored_cookies_when_the_old_session_still_works():
+    """reload_cookies rolls back to the previous working session on failure; the router must not
+    then overwrite the stored (working) cookies or last_error with the rejected pair."""
+    account = Account(id="acc-healthy", psid="old-psid", psidts="old-psidts")
+    account.client = MagicMock()
+    account.client.is_healthy = True
+    account.client.reload_cookies = AsyncMock(return_value={"success": False, "error": "SNlM0e token not found"})
+
+    with patch("app.routers.admin.account_pool") as mock_pool:
+        mock_pool.accounts = [account]
+        mock_pool._save_to_file = MagicMock()
+
+        req = UpdateCookiesRequest(psid="new-psid", psidts="new-psidts", persist=True)
+        resp = await update_account_cookies("acc-healthy", req)
+
+        assert resp.status_code == 503
+        assert b"working session was kept" in resp.body
+        assert account.psid == "old-psid" and account.psidts == "old-psidts"
+        assert account.last_error == ""
         mock_pool._save_to_file.assert_not_called()
 
 

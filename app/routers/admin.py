@@ -235,15 +235,22 @@ async def update_account_cookies(account_id: str, req: UpdateCookiesRequest):
                 account_pool._save_to_file()
                 return {"status": "ok", "message": f"Account {account_id} cookies updated"}
 
-            if req.persist:
+            error = result.get("error", "Cookie reload failed")
+            if account.client.is_healthy:
+                # reload_cookies rolled back to the previous working session: only the *submitted*
+                # pair was rejected, the stored one still works. Overwriting the stored cookies or
+                # last_error here would break a good account at the next restart and show a dead
+                # session on the dashboard.
+                error = f"{error} (submitted cookies rejected; the current working session was kept)"
+            elif req.persist:
                 account.psid = req.psid
                 account.psidts = req.psidts
-                account.last_error = result.get("error", "Cookie reload failed")
+                account.last_error = error
                 account_pool._save_to_file()
 
             return JSONResponse(
                 status_code=503,
-                content={"error": {"message": result.get("error", "Cookie reload failed"), "type": "reload_error"}},
+                content={"error": {"message": error, "type": "reload_error"}},
             )
     return JSONResponse(
         status_code=404,
