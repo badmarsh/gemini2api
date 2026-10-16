@@ -44,18 +44,10 @@ NOT_APPLICABLE = {("hang_after_first", True)}  # content already streamed: see t
 KNOWN_GAPS: dict = {}
 
 # Open defects of the fallback-OFF contract (``test_fallback_off_never_a_silent_empty_success``), same xfail idea.
-# These cases used to pass VACUOUSLY: the assertion required ``error_class == ""`` together with empty content, but
-# ``classify`` reports empty content as "empty_result", so it could never fire. With ``is_silent_empty`` it does.
-SILENT_EMPTY_REASON = (
-    "argon_fallback_to_flash off: an Argon reply with no text is returned as HTTP 200 with empty content. "
-    "app/routers/openai.py only turns a Google web-error TEXT into an error (the `is_empty_result(result) or "
-    "is_err_text` block); an empty result falls through to a normal completion."
-)
-KNOWN_GAPS_FALLBACK_OFF: dict = {
-    (name, stream): SILENT_EMPTY_REASON
-    for name in ("empty_reply", "no_frames", "cookie_expired", "malformed_frame", "truncated_frame")
-    for stream in (False, True)
-}
+# History: these cases used to pass VACUOUSLY (``classify`` reports empty content as "empty_result", so the old
+# assertion could never fire); ``is_silent_empty`` fixed that and exposed a real gap (HTTP 200 with empty content when
+# the Flash fallback is off). The routers now answer 502 / an error event (app.core.fallback.is_blank_answer).
+KNOWN_GAPS_FALLBACK_OFF: dict = {}
 
 
 def _spec(stream: bool, label: str) -> RequestSpec:

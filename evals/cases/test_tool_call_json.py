@@ -30,14 +30,8 @@ SCHEMA = {"type": "object", "properties": {"path": {"type": "string"}, "content"
 ARGS = {"path": "notes/a.txt", "content": "line1\nline2\n"}
 
 # Open gaps as {(protocol, stream): reason}; they run as xfail(strict=True) and go red once the app is fixed.
-KNOWN_GAPS: dict = {
-    ("gemini", True): (
-        "native streamGenerateContent with tools never emits a functionCall part: app/routers/gemini.py "
-        "(stream_generator, buffered tools branch) streams the model text back verbatim, so the client receives the "
-        "raw {\"status\":\"tool_use\",...} envelope as text. Documented there as historical behaviour; "
-        "non-stream generateContent converts it correctly."
-    ),
-}
+# (native streamGenerateContent with tools used to stream the raw tool_use envelope as text; it now emits functionCall.)
+KNOWN_GAPS: dict = {}
 
 
 def _marks(proto: str, stream: bool) -> list:

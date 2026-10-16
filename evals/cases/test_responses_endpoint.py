@@ -18,16 +18,9 @@ from evals.fake_upstream import scenarios as sc
 from evals.harness import InProcessSUT
 from evals.runner import RequestSpec, is_silent_empty, run_request
 
-# Open gap, same xfail(strict) convention as test_argon_fallback.KNOWN_GAPS_FALLBACK_OFF.
-SILENT_EMPTY_REASON = (
-    "argon_fallback_to_flash off: /v1/responses finishes with status 'completed' and no output text. Only the Argon "
-    "fallback in app/routers/responses.py inspects is_empty_result(); nothing turns an empty result into an error."
-)
-KNOWN_GAPS_FALLBACK_OFF: dict = {
-    (name, stream): SILENT_EMPTY_REASON
-    for name in ("empty_reply", "no_frames", "cookie_expired", "malformed_frame", "truncated_frame")
-    for stream in (False, True)
-}
+# Open gaps, same xfail(strict) convention as test_argon_fallback.KNOWN_GAPS_FALLBACK_OFF. Empty: /v1/responses used to
+# finish "completed" with no output text when the Flash fallback was off; it now answers 502 / response.failed.
+KNOWN_GAPS_FALLBACK_OFF: dict = {}
 
 
 def _spec(stream: bool, label: str = "responses", model: str = MODEL) -> RequestSpec:
