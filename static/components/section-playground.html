@@ -1,12 +1,18 @@
-<link rel="stylesheet" href="components/section-playground.css?v=7">
+<link rel="stylesheet" href="components/section-playground.css?v=8">
 <!-- Playground Section -->
 <section id="playground" class="section" aria-labelledby="playground-title">
-    <h2 id="playground-title"><i class="fas fa-flask"></i> <span data-i18n="playground.title">Playground</span></h2>
+    <div class="playground-header-row">
+        <h2 id="playground-title"><i class="fas fa-flask"></i> <span data-i18n="playground.title">Playground Studio</span></h2>
+        <div class="pg-mode-selector">
+            <button class="btn btn-sm btn-primary active" id="pg-mode-studio"><i class="fas fa-columns"></i> Studio / Canvas</button>
+            <button class="btn btn-sm btn-outline" id="pg-mode-chat"><i class="fas fa-comments"></i> Chat Only</button>
+        </div>
+    </div>
 
-    <div class="playground-container">
+    <div class="playground-container has-canvas" id="playground-split-container">
         <!-- Left Panel: Request Config -->
-        <div class="playground-panel">
-            <h3 data-i18n="playground.config">Request Configuration</h3>
+        <div class="playground-panel config-panel">
+            <h3 data-i18n="playground.config">Configuration</h3>
             <div class="form-group">
                 <label class="form-label" for="pg-model" data-i18n="playground.model">Model</label>
                 <select id="pg-model" class="form-control">
@@ -15,23 +21,23 @@
             </div>
             <div class="form-group">
                 <label class="pg-thinking-toggle">
-                    <input type="checkbox" id="pg-thinking">
-                    <span data-i18n="playground.thinking">Thinking</span>
+                    <input type="checkbox" id="pg-thinking" checked>
+                    <span data-i18n="playground.thinking">Thinking / Reasoning</span>
                 </label>
-                <span class="form-hint" data-i18n="playground.thinkingHint">Returns the model's reasoning/thinking process.</span>
+                <span class="form-hint" data-i18n="playground.thinkingHint">Returns model's inner thoughts & reasoning steps.</span>
             </div>
             <div class="form-group">
-                <label class="form-label" for="pg-message" data-i18n="playground.message">Message</label>
-                <textarea id="pg-message" class="form-control" data-i18n-placeholder="playground.inputPlaceholder" placeholder="Type a message..." rows="10"></textarea>
+                <label class="form-label" for="pg-message" data-i18n="playground.message">Prompt / Instructions</label>
+                <textarea id="pg-message" class="form-control" data-i18n-placeholder="playground.inputPlaceholder" placeholder="Ask anything, request an interactive HTML/JS app, generate an image or video..." rows="6"></textarea>
                 <span class="form-hint" data-i18n="playground.hint">Enter to send, Shift + Enter for new line</span>
             </div>
             <div class="form-group">
-                <label class="form-label" data-i18n="playground.images">Images</label>
+                <label class="form-label">Media & Attachments</label>
                 <div id="pg-image-preview" class="pg-image-preview"></div>
-                <button type="button" class="btn btn-outline btn-sm" id="pg-image-btn">
-                    <i class="fas fa-image"></i> <span data-i18n="playground.addImage">Add Image</span>
+                <button type="button" class="btn btn-outline btn-sm" id="pg-image-btn" title="Attach Images or Videos">
+                    <i class="fas fa-paperclip"></i> <span>Attach Media</span>
                 </button>
-                <input type="file" id="pg-image-input" accept="image/*" multiple hidden>
+                <input type="file" id="pg-image-input" accept="image/*,video/*" multiple hidden>
             </div>
             <div class="flex gap-1">
                 <button class="btn btn-primary" id="pg-send">
@@ -43,9 +49,11 @@
             </div>
         </div>
 
-        <!-- Right Panel: Chat -->
+        <!-- Middle Panel: Chat Stream -->
         <div class="playground-panel chat-panel">
-            <h3 data-i18n="playground.chat">Chat</h3>
+            <div class="panel-header-actions">
+                <h3 data-i18n="playground.chat">Chat Stream</h3>
+            </div>
             <div id="pg-chat" class="chat-container">
                 <div class="chat-placeholder">
                     <i class="fas fa-comment-dots"></i>
@@ -53,5 +61,11 @@
                 </div>
             </div>
         </div>
+
+        <!-- Right Panel: Interactive Canvas (Live App Sandbox, Code, Console) -->
+        <div class="playground-panel canvas-panel" id="pg-canvas-panel">
+            <div id="pg-canvas-root"></div>
+        </div>
     </div>
 </section>
+
