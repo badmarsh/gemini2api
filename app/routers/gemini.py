@@ -344,6 +344,7 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
 
         prompt_tokens = estimate_tokens(prompt)
         response_text = ""
+        tool_parts: list = []
 
         # 有工具/附件：需完整文本，走非流式收集后切片（零回归）。
         # generate() 阻塞期间此前零字节输出——不是空闲读超时，是首字节超时，60s 首字节限制的
@@ -397,9 +398,21 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                     raise
                 parsed = parse_task.result()
                 if isinstance(parsed, dict):
-                    response_text = parsed.get("content", _retried.get("text") or response_text)
-            async for chunk in split_into_chunks(response_text):
-                yield _chunk(chunk)
+                    if parsed.get("type") == "tool_calls":
+                        # Same conversion as generateContent: the client gets functionCall parts, not the raw
+                        # {"status":"tool_use",...} envelope as text.
+                        tool_parts = [{"functionCall": {"name": tc["name"], "args": tc.get("arguments", {})}}
+                                      for tc in parsed["tool_calls"]]
+                        response_text = ""
+                    else:
+                        response_text = parsed.get("content", _retried.get("text") or response_text)
+            if tool_parts:
+                yield json.dumps({
+                    "candidates": [{"content": {"parts": tool_parts, "role": "model"}, "index": 0}]
+                }) + "\n"
+            else:
+                async for chunk in split_into_chunks(response_text):
+                    yield _chunk(chunk)
         else:
             # === 真流式路径（纯文本）===
             try:

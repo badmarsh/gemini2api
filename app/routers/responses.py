@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES
-from app.core.fallback import is_empty_result
+from app.core.fallback import is_empty_result, is_blank_answer, EMPTY_RESPONSE_MESSAGE
 from app.core import argon_breaker
 from app.core.responses_protocol import (
     parse_responses_input, build_responses_object, new_response_id, ResponsesStreamEncoder,
@@ -195,6 +195,8 @@ async def create_response(request: Request):
             text = result.get("text", "")
         except Exception as e_fb:
             logger.error(f"Fallback to {settings.argon_fallback_model} also failed: {e_fb}")
+    if is_blank_answer(result):
+        return _error(502, EMPTY_RESPONSE_MESSAGE, error_type="api_error")
     # AI 生成图片：沿用 chat/completions 的既有做法，Markdown 图片链接嵌入文字内容（design §4.3）
     gen_images = result.get("images") or []
     if gen_images:
@@ -295,6 +297,9 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
             except Exception as e_fb:
                 yield enc.failed(str(e_fb))
                 return
+        if is_blank_answer(result):
+            yield enc.failed(EMPTY_RESPONSE_MESSAGE)
+            return
         thoughts = result.get("thoughts") or ""
         gen_images = result.get("images") or []
         if gen_images:
@@ -434,6 +439,10 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
         else:
             yield enc.failed(str(e))
             return
+
+    if not streamed_any and not (full_text or "").strip() and not final_images and not thoughts:
+        yield enc.failed(EMPTY_RESPONSE_MESSAGE)
+        return
 
     if final_images:
         md = _images_to_markdown(final_images, request)

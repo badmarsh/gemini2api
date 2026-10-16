@@ -72,6 +72,19 @@ def is_empty_result(result) -> bool:
     return not text and not images
 
 
+EMPTY_RESPONSE_MESSAGE = "Upstream returned an empty response (no text, no images)"
+
+
+def is_blank_answer(result) -> bool:
+    """is_empty_result() that also carries no reasoning text: nothing a client could show or act on.
+
+    Routers use it once every fallback option is exhausted, to answer with a retryable error instead of an HTTP 200
+    with empty content (a client cannot tell that from a real reply, and cannot retry it)."""
+    if not is_empty_result(result):
+        return False
+    return not (isinstance(result, dict) and str(result.get("thoughts") or "").strip())
+
+
 def openai_data_is_empty(data) -> bool:
     """True when an OpenAI-style response dict has neither content nor tool_calls
     (so a fallback candidate that "answered with nothing" is skipped too)."""

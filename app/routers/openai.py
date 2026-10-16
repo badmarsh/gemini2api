@@ -11,7 +11,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.api_forwarder import forward_to_provider, open_stream
-from app.core.fallback import fallback_enabled, is_empty_result, get_fallback_entries, openai_data_is_empty
+from app.core.fallback import (
+    fallback_enabled, is_empty_result, get_fallback_entries, openai_data_is_empty, is_blank_answer,
+    EMPTY_RESPONSE_MESSAGE,
+)
 from app.core import argon_breaker
 from app.core.conversation_store import conversation_store
 from app.core.gemini_client import (
@@ -426,6 +429,14 @@ async def chat_completions(req: ChatRequest, request: Request):
                 content={"error": {"message": res_text, "type": err_type}},
                 headers=headers,
             )
+        if is_blank_answer(result):
+            status, err_type, retry_after = classify_error(GoogleWebError(EMPTY_RESPONSE_MESSAGE))
+            headers = {"Retry-After": str(retry_after)} if retry_after else None
+            return JSONResponse(
+                status_code=status,
+                content={"error": {"message": EMPTY_RESPONSE_MESSAGE, "type": err_type}},
+                headers=headers,
+            )
 
     text = result.get("text", "")
     # AI 生成图片：图片在前，紧跟文字描述（单换行，不留多余空行）
@@ -674,6 +685,9 @@ async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv
         if is_err_text:
             yield _err_chunk(RuntimeError(stripped_full))
             return
+        # Nothing streamed, nothing to fall back to: say so instead of finishing with an empty "stop".
+        yield _err_chunk(GoogleWebError(EMPTY_RESPONSE_MESSAGE))
+        return
 
     # 生图兜底：极少数生图意图未被识别而走了真流式（文字已先流出，无法把图收回到最前）。
     # 此时图片在最后帧拿到，补发图片增量；用单换行紧凑拼接，保证图能独立成行正常显示。
@@ -833,6 +847,9 @@ async def _stream_response_buffered(prompt: str, model: str, has_tools: bool, ge
             return
         if is_err_text:
             yield _err_chunk(RuntimeError(raw_res_text))
+            return
+        if is_blank_answer(result):
+            yield _err_chunk(GoogleWebError(EMPTY_RESPONSE_MESSAGE))
             return
 
     text = result.get("text", "")
