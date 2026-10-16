@@ -1121,7 +1121,7 @@ async function sendPlaygroundRequest() {
             aiBubble.textContent = t('playground.noContent');
         } else {
             aiBubble.innerHTML = _pgRenderContent(outcome.content);
-            _pgAttachArtifactCards(aiBubble, outcome.content);
+            if (typeof _pgAttachArtifactCards === 'function') _pgAttachArtifactCards(aiBubble, outcome.content);
             chatContainer.scrollTop = chatContainer.scrollHeight;
             _pgMessages.push({ role: 'assistant', content: outcome.content });
             while (_pgMessages.length > (typeof APP_CONSTANTS !== 'undefined' ? APP_CONSTANTS.LIMITS.MAX_RING_BUFFER_MESSAGES : 200)) {
