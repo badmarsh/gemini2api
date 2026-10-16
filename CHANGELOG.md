@@ -13,6 +13,13 @@ All notable changes to this project will be documented in this file. The format 
 - Log scrubbing now masks the whole key token: `sk-ant-...` and `sk-proj-...` keys (letters, digits, `-`, `_`), URL-encoded `sk%2D...` keys, and `?key=` / `?api_key=` / `?apikey=` / `?api-key=` query values. Before, only the first segment of a dashed key was hidden and the tail leaked. The same scrubber backs the request log.
 - `PATCH /admin/api-keys/fallback` no longer returns the raw exception text (which could contain local file paths) when persisting fails; the details stay in the server log.
 
+### Changed
+- Argon timeouts and stalls no longer escape as a bare `500`: `curl_cffi` timeouts (an `OSError`) are classified as `504` (timeout) or `502` (other transport errors) and are caught by the OpenAI, Anthropic and native Gemini routers, so the Flash fallback actually runs.
+- An Argon stream that ends without any answer now falls back to Flash on `/v1/chat/completions` and `/v1/responses` (when `ARGON_FALLBACK_TO_FLASH` is on) instead of returning an empty completion.
+- `/v1/messages` and the native Gemini endpoints now also fall back from Argon to Flash (same rules as the OpenAI endpoints, before any content was streamed).
+- An Argon timeout with the Flash fallback on now goes straight to Flash instead of retrying the other Argon account (which doubled the wait to ~2x360 s). `ARGON_FAILOVER_ON_STALL=true` restores the old behaviour.
+- Stall circuit breaker: after an Argon stall, Argon requests are served by Flash for `ARGON_STALL_BREAKER_SECONDS` (default 180) instead of each waiting out the full timeout again. Set it to `0` to disable. Has no effect when `ARGON_FALLBACK_TO_FLASH` is off.
+
 ### Added
 - Dashboard v2: the dashboard now loads `/admin/status` and `/admin/system-info` in parallel (`Promise.allSettled`). If only one of them fails, the other card group still renders and a small notice with a Retry button appears for the failed part; the full-section error screen is kept for the case where both fail. The dashboard also refreshes itself every 30 seconds, but only while it is the active section and the browser tab is visible (a background refresh never replaces the page with an error screen and skips the static QR cards). New i18n keys `dashboard.error.status`, `dashboard.error.system`, `dashboard.retry` in all five languages.
 

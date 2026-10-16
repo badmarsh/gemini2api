@@ -12,9 +12,10 @@ from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.api_forwarder import forward_to_provider, open_stream
 from app.core.fallback import fallback_enabled, is_empty_result, get_fallback_entries, openai_data_is_empty
+from app.core import argon_breaker
 from app.core.conversation_store import conversation_store
 from app.core.gemini_client import (
-    GEMINI_MODELS, MODEL_ALIASES, _resolve_model, HTTPStatusError, classify_error,
+    GEMINI_MODELS, MODEL_ALIASES, _resolve_model, HTTPStatusError, UPSTREAM_ERRORS, classify_error,
     GoogleWebError, GOOGLE_WEB_ERROR_PHRASES,
 )
 from app.core.stream import split_into_chunks, format_sse, iter_with_keepalive, SSE_KEEPALIVE_INTERVAL, SSE_KEEPALIVE_FRAME, sse_keepalive_during
@@ -326,8 +327,8 @@ async def chat_completions(req: ChatRequest, request: Request):
         extended_thinking = (bool(_eff) or is_thinking_model) and settings.extended_thinking_enabled
 
     is_argon = ("argon" in req.model.lower() or "argon" in resolved_model.lower())
-    if is_argon and getattr(settings, "argon_always_fallback", False):
-        logger.info(f"Argon requested ('{req.model}'), but argon_always_fallback is enabled. Serving {settings.argon_fallback_model}.")
+    if is_argon and (getattr(settings, "argon_always_fallback", False) or argon_breaker.is_open()):
+        logger.info(f"Argon requested ('{req.model}'), but argon_always_fallback or the stall breaker is active. Serving {settings.argon_fallback_model}.")
         resolved_model = settings.argon_fallback_model
         extended_thinking = True
         is_argon = False
@@ -343,7 +344,7 @@ async def chat_completions(req: ChatRequest, request: Request):
         result = await gemini_client.generate(prompt, resolved_model, gemini_conv_id, attachments,
                                               gem_id=gem_id, account_id=gem_account_id,
                                               extended_thinking=extended_thinking)
-    except (RuntimeError, ValueError, HTTPStatusError) as e:
+    except UPSTREAM_ERRORS as e:
         err = e
         result = None
         if is_argon and getattr(settings, "argon_fallback_to_flash", True):
@@ -352,7 +353,7 @@ async def chat_completions(req: ChatRequest, request: Request):
                 result = await gemini_client.generate(prompt, settings.argon_fallback_model, gemini_conv_id, attachments,
                                                       gem_id=gem_id, account_id=gem_account_id,
                                                       extended_thinking=True)
-            except (RuntimeError, ValueError, HTTPStatusError) as e_fb:
+            except UPSTREAM_ERRORS as e_fb:
                 err = e_fb
         # 扩展思维链路径失败：先原样退回非思维链重试一次，再走既有兜底（会话过期/第三方）
         elif extended_thinking:
@@ -361,7 +362,7 @@ async def chat_completions(req: ChatRequest, request: Request):
                 result = await gemini_client.generate(prompt, resolved_model, gemini_conv_id, attachments,
                                                       gem_id=gem_id, account_id=gem_account_id,
                                                       extended_thinking=False)
-            except (RuntimeError, ValueError, HTTPStatusError) as e2:
+            except UPSTREAM_ERRORS as e2:
                 err = e2
 
         if result is None:
@@ -588,6 +589,11 @@ async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv
                     full_text = final_text
                 new_conv_id = evt.get("conversation_id", "")
                 final_images = evt.get("images") or []
+        # An Argon stream that ends with no answer at all (empty reply, sign-in page, malformed or truncated
+        # frames) raises nothing, so it used to skip the Flash fallback and finish as an empty completion.
+        if (is_argon and getattr(settings, "argon_fallback_to_flash", True)
+                and not streamed_any and not (full_text or "").strip() and not final_images):
+            raise RuntimeError("Argon stream ended without any answer")
     except Exception as e:
         if is_argon and getattr(settings, "argon_fallback_to_flash", True) and not streamed_any:
             logger.warning(f"Argon stream failed before first chunk ({e}), falling back to {settings.argon_fallback_model}")
@@ -920,7 +926,7 @@ async def images_generations(req: ImageGenerationRequest):
     model = _resolve_model(req.model or "gemini-pro")
     try:
         result = await gemini_client.generate(prompt, req.model or "gemini-pro")
-    except (RuntimeError, ValueError) as e:
+    except UPSTREAM_ERRORS as e:
         return JSONResponse(status_code=500,
             content={"error": {"message": str(e), "type": "api_error"}})
 

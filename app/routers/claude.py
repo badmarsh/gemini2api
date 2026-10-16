@@ -10,7 +10,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
-from app.core.gemini_client import HTTPStatusError, classify_error
+from app.core.gemini_client import HTTPStatusError, UPSTREAM_ERRORS, classify_error
+from app.core import argon_fallback
 from app.core.stream import split_into_chunks, iter_with_keepalive, SSE_KEEPALIVE_FRAME, sse_keepalive_during
 from app.models.claude import (
     ClaudeRequest, ClaudeResponse, ContentBlock, ClaudeUsage,
@@ -95,6 +96,8 @@ async def create_message(req: ClaudeRequest, request: Request):
             gem_account_id = gem_info.get("account_id") or None
             resolved_model = gem_info.get("base_model") or "gemini-pro"
 
+    resolved_model, is_argon, force_thinking = argon_fallback.plan(req.model, resolved_model)
+
     has_tools = bool(req.tools)
     # 生图意图优先：带 tools 但明确生图意图时跳过工具模拟，直接生图（否则生图被压制）。
     # 只看最后一轮用户消息：整段 prompt 含 system 提示词与 tool_result 正文，
@@ -121,15 +124,16 @@ async def create_message(req: ClaudeRequest, request: Request):
     if req.stream:
         return StreamingResponse(
             _stream_claude(prompt, resolved_model, has_tools, attachments, req.model, gem_id, gem_account_id,
-                          request=request),
+                          request=request, is_argon=is_argon, thinking=force_thinking),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     try:
-        result = await gemini_client.generate(prompt, resolved_model, "", attachments,
-                                              gem_id=gem_id, account_id=gem_account_id)
-    except (RuntimeError, ValueError, HTTPStatusError) as e:
+        result = await argon_fallback.generate(gemini_client, prompt, resolved_model, attachments,
+                                               is_argon=is_argon, thinking=force_thinking,
+                                               gem_id=gem_id, account_id=gem_account_id)
+    except UPSTREAM_ERRORS as e:
         status, err_type, retry_after = classify_error(e)
         headers = {"Retry-After": str(retry_after)} if retry_after else None
         return JSONResponse(
@@ -143,8 +147,9 @@ async def create_message(req: ClaudeRequest, request: Request):
 
     if has_tools:
         async def _regenerate_for_tools() -> str:
-            r = await gemini_client.generate(prompt, resolved_model, "", attachments,
-                                             gem_id=gem_id, account_id=gem_account_id)
+            r = await argon_fallback.generate(gemini_client, prompt, resolved_model, attachments,
+                                              is_argon=is_argon, thinking=force_thinking,
+                                              gem_id=gem_id, account_id=gem_account_id)
             return r.get("text", "")
 
         parsed = await parse_tool_response_with_retry(text, _regenerate_for_tools)
@@ -203,14 +208,14 @@ async def count_tokens(req: ClaudeRequest):
     return {"input_tokens": count}
 
 
-async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=None, display_model: str = "", gem_id=None, account_id=None, request=None) -> AsyncGenerator[str, None]:
+async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=None, display_model: str = "", gem_id=None, account_id=None, request=None, is_argon: bool = False, thinking: bool = False) -> AsyncGenerator[str, None]:
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
     model_name = display_model or model
 
     # 有工具/附件：需完整文本，走非流式收集后切片（零回归）
     if has_tools or attachments:
         async for sse in _stream_claude_buffered(prompt, model, has_tools, attachments, msg_id, model_name, gem_id, account_id,
-                                                 request=request):
+                                                 request=request, is_argon=is_argon, thinking=thinking):
             yield sse
         return
 
@@ -242,8 +247,9 @@ async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=N
     final_images = []
     try:
         async for _kind, evt in iter_with_keepalive(
-            gemini_client.generate_stream(prompt, model, "", attachments,
-                                          gem_id=gem_id, account_id=account_id)):
+            argon_fallback.generate_stream(gemini_client, prompt, model, attachments,
+                                           is_argon=is_argon, thinking=thinking,
+                                           gem_id=gem_id, account_id=account_id)):
             if _kind == "ping":
                 yield SSE_KEEPALIVE_FRAME
                 continue
@@ -326,11 +332,12 @@ async def _stream_claude(prompt: str, model: str, has_tools: bool, attachments=N
     yield _claude_sse({"type": "message_stop"})
 
 
-async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, attachments, msg_id: str, display_model: str = "", gem_id=None, account_id=None, request=None) -> AsyncGenerator[str, None]:
+async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, attachments, msg_id: str, display_model: str = "", gem_id=None, account_id=None, request=None, is_argon: bool = False, thinking: bool = False) -> AsyncGenerator[str, None]:
     """非流式收集 + 切片：用于有工具调用/附件的场景。"""
     model_name = display_model or model
-    gen_task = asyncio.create_task(gemini_client.generate(prompt, model, "", attachments,
-                                                          gem_id=gem_id, account_id=account_id))
+    gen_task = asyncio.create_task(argon_fallback.generate(gemini_client, prompt, model, attachments,
+                                                           is_argon=is_argon, thinking=thinking,
+                                                           gem_id=gem_id, account_id=account_id))
     try:
         async for ping in sse_keepalive_during(gen_task):
             yield ping
@@ -373,8 +380,9 @@ async def _stream_claude_buffered(prompt: str, model: str, has_tools: bool, atta
     if has_tools:
         # message_start 已发出，但还没发任何 content 块，此处重试是安全的。
         async def _regenerate_for_tools() -> str:
-            r = await gemini_client.generate(prompt, model, "", attachments,
-                                             gem_id=gem_id, account_id=account_id)
+            r = await argon_fallback.generate(gemini_client, prompt, model, attachments,
+                                              is_argon=is_argon, thinking=thinking,
+                                              gem_id=gem_id, account_id=account_id)
             return r.get("text", "")
 
         # 畸形工具 JSON 的重试要再跑一整轮上游 generate()——message_start 已经发出、

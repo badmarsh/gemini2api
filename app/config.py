@@ -108,6 +108,12 @@ class Settings(BaseSettings):
     argon_always_fallback: bool = False
     # Argon 兜底目标模型名（默认 gemini-flash-thinking 即 Gemini 3.8 Flash High）。
     argon_fallback_model: str = "gemini-flash-thinking"
+    # Argon 请求卡死(超时)后：默认(false)不再换下一个账号重试——每个账号都要再等满 360s 超时，
+    # 直接交给路由层降级到 Flash；设为 true 恢复“先换账号重试”的旧行为。仅在 argon_fallback_to_flash=true 时生效。
+    argon_failover_on_stall: bool = False
+    # After an Argon stall (timeout), serve Argon requests from the Flash fallback for this many seconds instead
+    # of letting each one wait out the same timeout. 0 disables. Only active when argon_fallback_to_flash=true.
+    argon_stall_breaker_seconds: int = 180
 
     @field_validator("gemini_psid")
     @classmethod

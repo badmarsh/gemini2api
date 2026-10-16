@@ -12,6 +12,7 @@ from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES
 from app.core.fallback import is_empty_result
+from app.core import argon_breaker
 from app.core.responses_protocol import (
     parse_responses_input, build_responses_object, new_response_id, ResponsesStreamEncoder,
 )
@@ -124,8 +125,8 @@ async def create_response(request: Request):
             resolved_model = gem_info.get("base_model") or "gemini-pro"
 
     is_argon = ("argon" in model.lower() or "argon" in resolved_model.lower())
-    if is_argon and getattr(settings, "argon_always_fallback", False):
-        logger.info(f"Argon requested ('{model}'), but argon_always_fallback is enabled. Serving {settings.argon_fallback_model}.")
+    if is_argon and (getattr(settings, "argon_always_fallback", False) or argon_breaker.is_open()):
+        logger.info(f"Argon requested ('{model}'), but argon_always_fallback or the stall breaker is active. Serving {settings.argon_fallback_model}.")
         resolved_model = settings.argon_fallback_model
         extended_thinking = True
         is_argon = False
@@ -378,6 +379,11 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
                 full_text = final_text
                 final_images = evt.get("images") or []
                 thoughts = evt.get("thoughts") or thoughts
+        # An Argon stream that ends with no answer at all (empty reply, sign-in page, malformed or truncated
+        # frames) raises nothing, so it used to skip the Flash fallback and finish as an empty completion.
+        if (is_argon and getattr(settings, "argon_fallback_to_flash", True)
+                and not streamed_any and not (full_text or "").strip() and not final_images):
+            raise RuntimeError("Argon stream ended without any answer")
     except Exception as e:
         if is_argon and getattr(settings, "argon_fallback_to_flash", True) and not streamed_any:
             logger.warning(f"Argon stream failed before first chunk ({e}), falling back to {settings.argon_fallback_model}")

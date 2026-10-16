@@ -45,6 +45,13 @@ class RetriesExhaustedError(RuntimeError):
     pass
 
 
+# Everything generate()/generate_stream() can raise for a failed upstream call. curl_cffi's Timeout and
+# ConnectionError derive from OSError, NOT RuntimeError, so routers that caught only
+# (RuntimeError, ValueError, HTTPStatusError) let a hung or reset request escape as a bare 500 and skipped
+# the Argon->Flash fallback. Routers should catch this tuple instead of re-listing exception types.
+UPSTREAM_ERRORS = (RuntimeError, ValueError, HTTPStatusError, OSError, asyncio.TimeoutError)
+
+
 GOOGLE_WEB_ERROR_PHRASES = (
     "Sorry, something went wrong. Please try your request again.",
     "I encountered an error doing what you asked. Could you try again?",
@@ -124,6 +131,12 @@ def classify_error(exc: Exception) -> tuple[int, str, int | None]:
         else:
             error_type = "api_error"
         return status, error_type, None
+    if _is_timeout_error(exc):
+        # A hung upstream request is a gateway timeout, not an internal error.
+        return 504, "api_error", None
+    if isinstance(exc, OSError) and not isinstance(exc, RuntimeError):
+        # Connection reset / refused / DNS failure talking to Google: transient upstream failure.
+        return 502, "api_error", 2
     if isinstance(exc, RuntimeError):
         msg = str(exc)
         if isinstance(exc, GoogleWebError) or "google web error" in msg.lower():

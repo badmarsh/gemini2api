@@ -13,6 +13,7 @@ from app.core.gemini_client import (
     RetriesExhaustedError, _is_timeout_error,
 )
 from app.core.fallback import is_empty_result
+from app.core import argon_breaker
 from app.config import settings
 from app.core.usage_metrics import live_metrics
 from app.utils.atomic_io import atomic_write_text
@@ -73,6 +74,27 @@ def _is_retryable(exc: Exception) -> bool:
     if isinstance(exc, HTTPStatusError) and exc.status_code in (401, 403):
         return True
     return False
+
+
+def _note_argon_stall(exc: Exception, model: str) -> None:
+    """An Argon request that hit its timeout trips the stall breaker (see app/core/argon_breaker.py)."""
+    if "argon" in (model or "").lower() and _is_timeout_error(exc):
+        argon_breaker.trip()
+
+
+def _may_fail_over(exc: Exception, model: str) -> bool:
+    """Whether a retryable failure should move on to the next account.
+
+    A hung Argon request has already burned its full timeout (360 s non-stream / 240 s to first chunk).
+    Retrying it on another account burns another full timeout per account before the router can degrade to
+    Flash, so with the Flash fallback on a stall is surfaced at once (the stuck account is still cooled down).
+    ARGON_FAILOVER_ON_STALL=true restores failover-first.
+    """
+    if (_is_timeout_error(exc) and "argon" in (model or "").lower()
+            and getattr(settings, "argon_fallback_to_flash", True)
+            and not getattr(settings, "argon_failover_on_stall", False)):
+        return False
+    return True
 
 
 def _is_empty_generation(result) -> bool:
@@ -862,6 +884,10 @@ class AccountPool:
                     released = True
                     if isinstance(e, HTTPStatusError) and e.status_code in (401, 403):
                         account.status = AccountStatus.EXPIRED
+                    _note_argon_stall(e, model)
+                    if not _may_fail_over(e, model):
+                        logger.warning(f"Account {account.id} got {e}; not failing over (Argon stall, Flash fallback takes over)")
+                        raise
                     logger.warning(f"Account {account.id} got {e}; failing over (tried={len(tried)})")
                     continue
                 await self.release(account, success=False, error=_error_summary(e))
@@ -944,6 +970,10 @@ class AccountPool:
                     released = True
                     if isinstance(e, HTTPStatusError) and e.status_code in (401, 403):
                         account.status = AccountStatus.EXPIRED
+                    _note_argon_stall(e, model)
+                    if not _may_fail_over(e, model):
+                        logger.warning(f"Account {account.id} got {e} before first chunk; not failing over (Argon stall, Flash fallback takes over)")
+                        raise
                     logger.warning(f"Account {account.id} got {e} before first chunk; stream failing over (tried={len(tried)})")
                     failover = True
                 else:

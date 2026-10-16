@@ -8,7 +8,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
-from app.core.gemini_client import HTTPStatusError, classify_error
+from app.core.gemini_client import HTTPStatusError, UPSTREAM_ERRORS, classify_error
+from app.core import argon_fallback
 from app.core.stream import split_into_chunks, iter_with_keepalive, sse_keepalive_during
 from app.models.gemini import (
     GeminiRequest,
@@ -201,6 +202,8 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
             gem_account_id = gem_info.get("account_id") or None
             model = gem_info.get("base_model") or "gemini-pro"
 
+    model, is_argon, force_thinking = argon_fallback.plan(model, model)
+
     messages, attachments = _parse_contents(req.contents)
     system = _parse_system(req.system_instruction)
     prompt = build_prompt_from_messages(messages, system=system)
@@ -219,9 +222,10 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
             prompt = build_tool_prompt(prompt, function_declarations)
 
     try:
-        result = await gemini_client.generate(prompt, model, "", attachments,
-                                              gem_id=gem_id, account_id=gem_account_id)
-    except (RuntimeError, ValueError, HTTPStatusError) as e:
+        result = await argon_fallback.generate(gemini_client, prompt, model, attachments,
+                                               is_argon=is_argon, thinking=force_thinking,
+                                               gem_id=gem_id, account_id=gem_account_id)
+    except UPSTREAM_ERRORS as e:
         status, err_type, retry_after = classify_error(e)
         headers = {"Retry-After": str(retry_after)} if retry_after else None
         return JSONResponse(
@@ -236,8 +240,9 @@ async def generate_content(model: str, req: GeminiRequest, request: Request):
     tool_parts = []
     if has_tools:
         async def _regenerate_for_tools() -> str:
-            r = await gemini_client.generate(prompt, model, "", attachments,
-                                             gem_id=gem_id, account_id=gem_account_id)
+            r = await argon_fallback.generate(gemini_client, prompt, model, attachments,
+                                              is_argon=is_argon, thinking=force_thinking,
+                                              gem_id=gem_id, account_id=gem_account_id)
             return r.get("text", "")
 
         parsed = await parse_tool_response_with_retry(response_text, _regenerate_for_tools)
@@ -309,6 +314,8 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
             gem_account_id = gem_info.get("account_id") or None
             model = gem_info.get("base_model") or "gemini-pro"
 
+    model, is_argon, force_thinking = argon_fallback.plan(model, model)
+
     messages, attachments = _parse_contents(req.contents)
     system = _parse_system(req.system_instruction)
     prompt = build_prompt_from_messages(messages, system=system)
@@ -342,8 +349,9 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
         # generate() 阻塞期间此前零字节输出——不是空闲读超时，是首字节超时，60s 首字节限制的
         # 代理会直接杀连接。NDJSON 流不能用 SSE 注释帧保活，改发空行（与下方真流式路径同款）。
         if has_tools or attachments:
-            gen_task = asyncio.create_task(gemini_client.generate(prompt, model, "", attachments,
-                                                                  gem_id=gem_id, account_id=gem_account_id))
+            gen_task = asyncio.create_task(argon_fallback.generate(gemini_client, prompt, model, attachments,
+                                                                   is_argon=is_argon, thinking=force_thinking,
+                                                                   gem_id=gem_id, account_id=gem_account_id))
             try:
                 async for _ping in sse_keepalive_during(gen_task):
                     yield "\n"
@@ -366,8 +374,9 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
                 _retried = {}
 
                 async def _regenerate_for_tools() -> str:
-                    r = await gemini_client.generate(prompt, model, "", attachments,
-                                                     gem_id=gem_id, account_id=gem_account_id)
+                    r = await argon_fallback.generate(gemini_client, prompt, model, attachments,
+                                                      is_argon=is_argon, thinking=force_thinking,
+                                                      gem_id=gem_id, account_id=gem_account_id)
                     _retried["text"] = r.get("text", "")
                     return _retried["text"]
 
@@ -395,8 +404,9 @@ async def stream_generate_content(model: str, req: GeminiRequest, request: Reque
             # === 真流式路径（纯文本）===
             try:
                 async for _kind, evt in iter_with_keepalive(
-                    gemini_client.generate_stream(prompt, model, "", attachments,
-                                                  gem_id=gem_id, account_id=gem_account_id)):
+                    argon_fallback.generate_stream(gemini_client, prompt, model, attachments,
+                                                   is_argon=is_argon, thinking=force_thinking,
+                                                   gem_id=gem_id, account_id=gem_account_id)):
                     if _kind == "ping":
                         # NDJSON blank-line keepalive (SSE ": ping" comment is invalid on this application/json stream)
                         yield "\n"
