@@ -391,6 +391,8 @@ def _debug_error_class(request: Request, status: int, raw: bytes = b"") -> str:
         return "cookie_invalid" if status == 403 else "auth_error"
     if status == 429:
         return "rate_limit"
+    if raw and b"protocol drift" in raw.lower():
+        return "protocol_drift"
     if status >= 500:
         return "upstream_error"
     if raw and b'"error"' in raw:

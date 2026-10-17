@@ -20,7 +20,7 @@ from app.core.regeneration_budget import RegenerationBudget
 from app.core.conversation_store import conversation_store
 from app.core.gemini_client import (
     GEMINI_MODELS, MODEL_ALIASES, _resolve_model, HTTPStatusError, UPSTREAM_ERRORS, classify_error,
-    GoogleWebError, GOOGLE_WEB_ERROR_PHRASES,
+    GoogleWebError, ProtocolDriftError, GOOGLE_WEB_ERROR_PHRASES,
 )
 from app.core.stream import split_into_chunks, format_sse, iter_with_keepalive, SSE_KEEPALIVE_INTERVAL, SSE_KEEPALIVE_FRAME, sse_keepalive_during
 from app.models.openai import (
@@ -627,6 +627,8 @@ async def _stream_response(prompt: str, model: str, has_tools: bool, gemini_conv
                 new_conv_id = evt.get("conversation_id", "")
                 final_images = evt.get("images") or []
     except Exception as e:
+        if isinstance(e, ProtocolDriftError) or "protocol drift" in str(e).lower():
+            request.state.debug_error_class = "protocol_drift"
         # Reached only when the Argon->Flash helper also gave up (or Argon content had already streamed):
         # the fallback itself is fully handled inside app/core/argon_fallback.py.
         # 流式失败：会话ID 过期等场景，用完整 prompt 非流式重试一次

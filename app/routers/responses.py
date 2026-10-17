@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
 from app.core.gemini_client import (
-    GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES, classify_error,
+    GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES, classify_error, ProtocolDriftError,
 )
 from app.core.fallback import is_empty_result, is_blank_answer, EMPTY_RESPONSE_MESSAGE
 from app.core import agent_loop, argon_fallback
@@ -249,6 +249,8 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
         try:
             result = gen_task.result()
         except Exception as e:
+            if isinstance(e, ProtocolDriftError) or "protocol drift" in str(e).lower():
+                request.state.debug_error_class = "protocol_drift"
             if is_argon and getattr(settings, "argon_fallback_to_flash", True):
                 logger.warning(f"Argon stream(buffered) failed ({e}), falling back to {settings.argon_fallback_model}")
                 fb_task = asyncio.create_task(gemini_client.generate(prompt, settings.argon_fallback_model, "", attachments,
@@ -398,6 +400,8 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
                 and not streamed_any and not (full_text or "").strip() and not final_images):
             raise RuntimeError("Argon stream ended without any answer")
     except Exception as e:
+        if isinstance(e, ProtocolDriftError) or "protocol drift" in str(e).lower():
+            request.state.debug_error_class = "protocol_drift"
         if is_argon and getattr(settings, "argon_fallback_to_flash", True) and not streamed_any:
             logger.warning(f"Argon stream failed before first chunk ({e}), falling back to {settings.argon_fallback_model}")
             try:

@@ -14,6 +14,10 @@ All notable changes to this project will be documented in this file. The format 
   per-agent API keys. Requests without these headers are unaffected.
 
 ### Fixed
+- **Stream protocol drift detection (`saw_frame`).** When Google's stream sends bytes but zero WRB frames
+  can be parsed, the stream now logs a warning (without raw body contents), raises `ProtocolDriftError`,
+  and classifies the request in diagnostics and metrics as `protocol_drift` instead of silently finishing
+  as an empty successful completion. Audit item L.
 - **Image generation endpoint now uses the resolved model.** `POST /v1/images/generations` resolved
   `model = _resolve_model(...)` but passed the raw, unresolved `req.model` string to
   `gemini_client.generate()`, bypassing model alias and family mapping. It now passes the resolved model.

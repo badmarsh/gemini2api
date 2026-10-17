@@ -46,6 +46,10 @@ class GoogleWebError(RuntimeError):
     """Google web frontend returned an upstream error template rather than model output."""
 
 
+class ProtocolDriftError(GoogleWebError):
+    """Google web frontend returned bytes but zero complete WRB frames could be parsed."""
+
+
 class RetriesExhaustedError(RuntimeError):
     """generate() used up its same-account retries. A distinct type so failover can
     recognise it without matching on the message text."""
@@ -1694,6 +1698,15 @@ class GeminiWebClient:
             # Never close the session here: it is shared. Drop our lease; if a reload
             # retired it meanwhile, being its last user closes it.
             await self._release_http(session)
+
+        if saw_bytes and not saw_frame:
+            logger.warning(
+                "generate_stream: received %d bytes but zero parseable WRB frames (protocol drift suspected)",
+                len(buf),
+            )
+            raise ProtocolDriftError(
+                f"Google web error: received {len(buf)} bytes but zero parseable WRB frames (protocol drift)"
+            )
 
         yield await self._finalize_stream(last_text, last_conv, last_images, last_thoughts)
 
