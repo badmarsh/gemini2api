@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BabysitFinding",
+  "description": "Schema for findings reported by Monitor observing Argon, proxy, pool, and refresher",
+  "type": "object",
+  "required": [
+    "finding_id",
+    "category",
+    "severity",
+    "confidence",
+    "summary",
+    "evidence",
+    "proposed_fix"
+  ],
+  "properties": {
+    "finding_id": {
+      "type": "string",
+      "pattern": "^finding_[0-9a-zA-Z_-]+$",
+      "description": "Unique finding identifier"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "argon",
+        "proxy",
+        "pool_cookies",
+        "refresher_noise",
+        "orchestrator"
+      ],
+      "description": "Classification category of the finding"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "warning", "error", "critical"],
+      "description": "Severity of the issue"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Confidence score based strictly on concrete evidence"
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Concise factual summary of the observation"
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["request_id", "timestamp", "quoted_log"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Exact request_id from proxy debug record (or 'n/a' if system event)"
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "ISO-8601 UTC timestamp of occurrence"
+        },
+        "quoted_log": {
+          "type": "string",
+          "description": "Verbatim quote from proxy log, timeline, or refresher log"
+        },
+        "metric_name": {
+          "type": "string",
+          "description": "Optional metric key (e.g. ttft_ms, error_class, max_inter_chunk_gap_ms)"
+        },
+        "metric_value": {
+          "description": "Observed metric value"
+        },
+        "task_id": {
+          "type": "string",
+          "description": "Task ID associated with this finding, if applicable"
+        }
+      },
+      "additionalProperties": false
+    },
+    "root_cause_hypothesis": {
+      "type": "string",
+      "description": "Plausible explanation of cause, explicitly labelled as hypothesis"
+    },
+    "proposed_fix": {
+      "type": "string",
+      "description": "Actionable engineering recommendation to prevent or resolve the issue"
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp when finding was authored"
+    }
+  },
+  "additionalProperties": false
+}
