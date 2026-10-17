@@ -1,8 +1,12 @@
 # Slovenský audit a reprodukčná správa
 
-Dátum auditu: **2026-10-16 UTC**
+Dátum auditu: **2026-10-16 UTC** (revízia 2026-10-17 UTC)
 Repozitár: `badmarsh/gemini2api-argon-proxy`
-Pracovná vetva: `arena/7d0e69e9-gemini2api-argon-proxy`
+Pracovná vetva: `arena/b7864136-gemini2api-argon-proxy`
+
+> Poznámka k názvu vetvy: v zadaní auditu bola uvedená vetva `arena/7d0e69e9-gemini2api-argon-proxy`.
+> Takáto vetva v lokálnom repozitári neexistuje; práce prebiehali na jedinej existujúcej vetve
+> `arena/b7864136-gemini2api-argon-proxy` a push prebiehal iba do nej (bez vytvárania ďalších vetiev).
 
 ## Rozsah a bezpečnostné hranice
 
@@ -16,14 +20,15 @@ ani identifikátory účtov; diagnostika používa nanajvýš krátky jednosmern
 
 | Brána | Baseline | Finálny stav |
 |---|---:|---:|
-| Unit/integration pytest | 991 passed, 1 warning | 1007 passed, 1 warning (`python 3.11` sandbox) |
+| Unit/integration pytest | 991 passed, 1 warning | **1104 passed, 1 warning** (`python 3.11` sandbox) |
 | Ruff | čistý | čistý (`python -m ruff check .`) |
-| Eval suite | 240 passed | 240 passed (`pytest evals -q -p no:cacheprovider`) |
-| T0 | existujúce deterministické fake-upstream baseline súbory | 52 records, bez abortu; digest `d70108e0…`, report `evals/reports/20261016T225213Z-30667a.json` |
-| Python 3.14 príkaz | v sandboxe chýba `py` launcher | použitá kontrolná Python 3.11; 3.14 brána zostáva explicitne otvorená pre CI/hostiteľský stroj |
+| Eval suite | 240 passed | **240 passed** (`pytest evals -q -p no:cacheprovider`) |
+| T0 | existujúce deterministické fake-upstream baseline súbory | **52 records, bez abortu**; report `evals/reports/20261016T225213Z-30667a.json` (resume: `{"run_id": "20261016T225213Z-30667a", "tier": "t0", "records": 52, "aborted": false}`) |
+| Python 3.14 príkaz | v sandboxe chýba `py` launcher | použitá kontrolná Python 3.11; **pridaná CI jobina `test-python-3-14` (advisory)**; 3.14 brána zostáva explicitne otvorená |
 
 Pôvodný `py -3.14 -m pytest -q` nebolo možné v tomto sandboxe vykonať, pretože launcher `py`
-neexistuje. Toto nie je vydávané za úspešný Python 3.14 test.
+neexistuje. Toto nie je vydávané za úspešný Python 3.14 test. Nová CI jobina je preto
+`continue-on-error: true` (advisory) a má sa po prvom zelenom behu povýšiť na tvrdú bránu.
 
 ## Zistenia a dôkaz RED → GREEN
 
@@ -33,8 +38,8 @@ neexistuje. Toto nie je vydávané za úspešný Python 3.14 test.
 spotrebovať dve drahé regenerácie.
 **GREEN:** `RegenerationBudget` je zdieľaný všetkými štyrmi router rodinami a buffered aj
 streaming cestami. Maximálne jeden token sa spotrebuje pred guardom alebo parser retry. Povolené
-a zablokované pokusy a posledný dôvod sú v `/admin/status.regenerations`. Dôkaz: `tests/unit/test_regeneration_budget.py`
-a router/eval testy.
+na zablokované pokusy a posledný dôvod sú v `/admin/status.regenerations`. Dôkaz: `tests/unit/test_regeneration_budget.py`
+na router/eval testy.
 
 ### 2. Oprava tool-call JSON bez hádania
 
@@ -97,13 +102,102 @@ T0 report je uložený v `evals/reports/20261016T225213Z-30667a.json` a stav v `
 obsahuje 52 deterministických scenárov, 20 pozorovaných fallbackov, p95 1813 ms a žiadny abort.
 Live tier sa nepovažuje za vykonaný bez explicitne dodaného test endpointu a poverenia mimo repozitára.
 
+### 7. Prometheus-compatible metriky
+
+**RED:** existovala len JSON diagnostika pre konzolu; vonkajšie scrapeovanie (Prometheus,
+OpenTelemetry exporter) chýbalo a každý si musel písať vlastný klient.
+**GREEN:** `GET /admin/metrics` (admin kľúč) renderuje štandardný text exposition formát
+(`app/core/prometheus_metrics.py`): počet requestov, latency a TTFT histogramy, fallback,
+Argon breaker, account pool (kapacita, saturácia, slot leak, cooling), parser chyby a
+regenerácie. Hodnoty labelov sú ohraničené (max. 12 hodnôt na label, zvyšok sa zrúši do
+`other`); neexistujú labely s request id, account hashom, promptom ani client modelom.
+JSON endpoint zostáva zdrojom pre konzolu. Dôkaz: `tests/unit/test_prometheus_metrics.py` (11 testov).
+
+### 8. Bezpečnostné hlavičky a CSRF plocha
+
+**RED:** odpovede bez `Content-Security-Policy`, `nosniff`, `X-Frame-Options` a sprievodných
+hlavičiek; konzola nevedela vysvetliť, prečo nie je potrebný CSRF token.
+**GREEN:** `app/core/security_headers.py` pridáva CSP (obmedzené na dva CDN, ktoré konzola naozaj
+používa), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` a
+`Cross-Origin-Opener-Policy`; externé odkazy majú `rel="noopener noreferrer"`. CSRF plocha je
+zdokumentovaná: konzola overuje bearer token v hlavičke `Authorization` a nepoužíva cookies, takže
+neexistuje ambient credential, ktorý by mohol zneužiť cross-site request; invariant je
+pinned regresným testom. Dôkaz: `tests/unit/test_security_headers.py` (9 testov).
+
+### 9. Prevádzkový prehľad (SLO panel)
+
+**RED:** dashboard ukazoval stav bez kontextu — nebolo vidieť, či je chyba 2 % alebo 20 %, či je
+pomalý TTFT, či je preplnený pool ani či bol vyčerpaný regeneračný budget; „neznáme" sa zobrazovalo
+ako „zdravé".
+**GREEN:** `app/core/slo.py` (`build_slo()`) počíta stav `ok` / `degraded` / `unknown` s dôvodmi
+(`breaker_open`, `error_rate`, `fallback_rate`, `ttft_p95`, `inter_chunk_gap`, `pool_saturated`,
+`pool_slot_leak`, `regeneration_budget_exhausted`) a okná 1h/24h/7d. Dashboard panel zobrazuje
+objem, chybovosť, TTFT p50/p95, max inter-chunk gap, breaker, fallback rate, budget a pool.
+Pri nulovom počte requestov je stav `unknown`, nie `ok`. Dôkaz: `tests/unit/test_slo_overview.py`
+(15 testov).
+
+### 10. Request explorer
+
+**RED:** jednotlivé requesty nebolo možné korelovať; incident sa musel rekonštruovať z viacerých
+zdrojov a bolo riziko, že sa v diagnostike vypíše telo promptu.
+**GREEN:** `GET /admin/debug-metrics/{request_id}` vracia časovú os jedného requestu
+(`app/core/request_timeline.py`): ingress/egress časy, TTFT, celková doba, inter-chunk gapy,
+požadovaný vs. skutočný model, fallback dôvod, parser failure class, počet regenerácií, stream
+markery a finish reason. Tela requestu/odpovede nie sú súčasťou payloadu ani časovej osi;
+`Authorization`, cookies, prompty ani account ID sa nikdy neexportujú. Dôkaz:
+`tests/unit/test_request_explorer.py` (16 testov).
+
+### 11. Configuration readiness
+
+**RED:** konzola zobrazovala len pár polí, takže sa nedalo zistiť, prečo panel nastavenie
+neplatí — panel hodnota vs. env vs. default, ktoré nastavenia potrebujú reštart, či override
+odpadol od schémy.
+**GREEN:** `GET /admin/config` (`app/core/config_diagnostics.py`) vracia efektívne hodnoty so
+zdrojom (`env` / `override` / `default`), zoznam reštartom vyžadovaných polí, validačné problémy
+a drift (`unknown_override`, `invalid_override`, `override_not_applied`, `env_overridden`).
+Secrets sú vykázané iba ako „konfigurované" (pri `argon_system_prompt` navyše dĺžka), nikdy
+ako hodnota. Dôkaz: `tests/unit/test_config_readiness.py` (14 testov vrátane node render testu).
+
+### 12. Prístupnosť dashboardu
+
+**RED:** ovládanie bolo mysliteľné len myšou, histogram nemal textový náhradu, stav sa menil
+potichu, animácie nerešpektovali `prefers-reduced-motion` a filtrovanie sa po reloadi stratilo.
+**GREEN:** fokus sa presúva na nadpis sekcie pri zmene sekcie, drill-down v exploreri dostane
+fokus, histogramové stĺpky majú `aria-label` (samotný stĺpec je `aria-hidden`), stavový chip je
+`role="status" aria-live="polite"`, existuje tlačidlo pause/resume auto-refreshu s `aria-pressed`
+(stav prežije reload), filter explorera je perzistovaný a CSS obsahuje `prefers-reduced-motion`
+blok. Všetky nové texty sú v piatich jazykoch. Dôkaz: `tests/unit/test_dashboard_accessibility.py`
+(9 node testov).
+
+### 13. Prevádzka účtového poolu
+
+**RED:** dashboard ukazoval stav účtu, ale nie to, koľko slotov je obsadených, koľko ostáva
+cooldownu ani či je session zdravá; operátor nemal bezpečnú akciu nad konkrétnym účtom.
+**GREEN:** `AccountPool.set_account_enabled()` prepína účet za behu (rotácia ho preskočí, cookies
+a počítadlá zostanú), `POST /admin/accounts/{id}/status` je chránený admin kľúčom a na neznámy
+id vráti 404 JSON. Karta účtu zobrazuje obsadené sloty vs. kapacitu, zostávajúci cooldown a
+zdravie session; akcie „Check" a „Enable/Disable" aj reset Argon breakeru sú chránené
+potvrdením. Stav je iba za behu (nezapisuje sa do `accounts.json`) a account id sa nikdy
+nezobrazuje v texte, iba v `data-` atribúte. Dôkaz:
+`tests/unit/test_account_pool_operations.py` (13 testov).
+
 ## Otvorené body
 
-1. Python 3.14 gate treba zopakovať na hostiteľovi, ktorý má `py -3.14`.
+1. Python 3.14 brána: nová CI jobina `test-python-3-14` je advisory (`continue-on-error`), kým
+   na hostiteľovi s `py -3.14` neprebehne zelený beh; potom ju treba povýšiť na tvrdú bránu.
 2. T1/T2 live spot check je voliteľný a závisí od explicitného bezpečného endpointu; v tomto
    sandboxe sa nesmie hádať Google URL ani čítať lokálne credentials.
 3. Diagnostika je zámerne bounded/in-memory; nie je to dlhodobý tracing backend.
 4. `LOG_BODIES_ENABLED` zostáva opt-in a limitovaný; nové metriky neobchádzajú privacy hranice.
+5. **Nerealizované kandidáty z auditu** (zostávajú otvorené, rozsah sa nemenil): pridané boli
+   Prometheus exporter, operačný prehľad, request explorer, konfiguračná pripravenosť,
+   prístupnosť dashboardu, prevádzka účtového poolu, bezpečnostné hlavičky, CI gate pre `evals`
+   a Python 3.14 job. Otvorené zostávajú: per-key/per-tenant kvóty a rozpočty, konfigurovateľné
+   routing profily, redacted replay/fixture knižnica, alerty a administratívny audit trail s
+   webhookom, request-size/upload limity, SSRF/file-serving hranice, perzistencia secret
+   redaction, parser/stream fuzz séria a reliability/perf hardening.
+6. Exporter je Prometheus text; OTel SDK/exporter (s push odosielaním) nebol pridaný, aby
+   nevznikol nový závislý package a aby zostala zachovaná bezpečná hranica konzoly.
 
 ## Zámerné non-fixy
 
@@ -112,7 +206,12 @@ Live tier sa nepovažuje za vykonaný bez explicitne dodaného test endpointu a 
   ani akceptované timeout/fallback pravidlá.
 - Fallback implementácia nebola duplikovaná mimo `app/core/argon_fallback.py`.
 - Model sa nemení po tom, ako už stream poslal obsah; serving model ostáva označený.
-- Neboli menené runtime dáta, cookies, `.env` ani testy oslabovaním/deletovaním.
+- Neboli menené runtime dáta, cookies, `.env` ani testy oslabovaním/deletovaním. Existujúci test
+  `tests/unit/test_account_card_rendering.py` bol rozšírený iba o dve nové pomocné funkcie, ktoré
+  karta účtu volá; jeho tvrdenia zostali nezmenené.
+- Nezmenili sa globálne limity, kapacita poolu ani správanie request timeoutov.
+- Bezpečnostné hlavičky sa nepridávali tak, aby vypnuli existujúce funkcie konzoly (CSP ponecháva
+  `'unsafe-inline'` pre inline bootstrap skripty konzoly).
 
 ## Reprodukčné príkazy
 
@@ -120,7 +219,7 @@ Live tier sa nepovažuje za vykonaný bez explicitne dodaného test endpointu a 
 API_KEY=sk-test-key .venv/bin/python -m ruff check .
 API_KEY=sk-test-key .venv/bin/pytest -q
 API_KEY=sk-test-key .venv/bin/pytest evals -q -p no:cacheprovider
-API_KEY=sk-test-key .venv/bin/python -m evals.tune --tier t0 --state evals/state.json
+API_KEY=sk-test-key .venv/bin/python -m evals.tune --tier t0 --resume
 ```
 
 Pri odovzdaní sa tabuľka Baseline/Finálny stav aktualizuje presným výstupom posledných troch

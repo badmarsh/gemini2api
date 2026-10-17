@@ -611,6 +611,120 @@ curl http://localhost:5918/admin/status \
 }
 ```
 
+### GET /admin/metrics
+
+Prometheus-compatible exposition of the same bounded, redacted diagnostics. The admin JSON
+endpoints stay the source of truth for the web console; this endpoint is a scrape-friendly
+rendering of the same snapshot.
+
+**Request:**
+```bash
+curl http://localhost:5918/admin/metrics \
+  -H "Authorization: Bearer sk-your-api-key"
+```
+
+**Response:** `text/plain; version=0.0.4` (Prometheus text exposition format)
+
+```
+# HELP gemini2api_uptime_seconds Seconds since the proxy process started.
+# TYPE gemini2api_uptime_seconds gauge
+gemini2api_uptime_seconds 3600
+# HELP gemini2api_requests_observed_total Requests observed in the retained diagnostics buffer, by window and status class.
+# TYPE gemini2api_requests_observed_total counter
+gemini2api_requests_observed_total{window="1h",status_class="ok"} 42
+# HELP gemini2api_request_duration_ms End-to-end request latency in milliseconds (retained buffer).
+# TYPE gemini2api_request_duration_ms histogram
+gemini2api_request_duration_ms_bucket{le="1000"} 12
+```
+
+Exported families: `uptime_seconds`, `requests_observed_total`, `requests_total`,
+`request_errors_total`, `served_by_total`, `fallback_total`, `parser_failures_total`,
+`parser_repaired_total`, `truncated_suspected_total`, `regenerations_total`,
+`regeneration_budget_blocked_total`, `request_duration_ms`, `request_ttft_ms`,
+`inter_chunk_gap_ms`, `error_rate_ratio`, `fallback_rate_ratio`, `account_pool_*` and
+`argon_breaker_*`.
+
+Label values are bounded (at most 12 distinct values per label, everything else collapses into
+`other`). There are no request-id, account-hash, prompt, cookie or client-model labels, so the
+scrape cannot become a high-cardinality index.
+
+### GET /admin/config
+
+The effective runtime configuration: every value with its source, which settings need a
+restart, validation problems and override drift. Secrets are reported as "configured" only.
+
+**Request:**
+```bash
+curl http://localhost:5918/admin/config \
+  -H "Authorization: Bearer sk-your-api-key"
+```
+
+**Response:**
+```json
+{
+  "fields": {
+    "argon_timeout": {
+      "value": 360.0,
+      "source": "env",
+      "env": "360",
+      "override": null,
+      "restart_required": false
+    }
+  },
+  "secrets": {
+    "api_key": {"configured": true, "source": "env"}
+  },
+  "features": {"usage_stats_enabled": true, "fallback_enabled": false},
+  "validation": {"ok": true, "issues": []},
+  "drift": [],
+  "restart_required": ["argon_system_prompt"]
+}
+```
+
+`source` is `env`, `override` (a value saved in the console settings panel and replayed on
+startup) or `default`. `drift` reports `unknown_override`, `invalid_override`,
+`override_not_applied` and `env_overridden`.
+
+### GET /admin/debug-metrics/{request_id}
+
+The correlated timeline of a single request. Bodies are never included, and the timeline
+contains no `Authorization` header, cookies, prompts or account IDs.
+
+**Request:**
+```bash
+curl http://localhost:5918/admin/debug-metrics/req-abc123 \
+  -H "Authorization: Bearer sk-your-api-key"
+```
+
+**Response:**
+```json
+{
+  "request": {
+    "request_id": "req-abc123",
+    "ingress_ts": "2026-10-16T22:52:13.000000+00:00",
+    "egress_ts": "2026-10-16T22:52:15.400000+00:00",
+    "duration_ms": 2400,
+    "ttft_ms": 350,
+    "max_inter_chunk_gap_ms": 120,
+    "requested_model": "gemini-3-pro",
+    "serving_model": "gemini-3-flash",
+    "model_substituted": true,
+    "status": 200,
+    "error_class": "",
+    "stream": true,
+    "path": "/v1/chat/completions",
+    "fallback": {"used": true, "reason": "argon_empty"},
+    "parser": {"failure_class": "", "repaired": false, "truncated_suspected": false},
+    "regenerations": 0,
+    "finish_reason": "stop",
+    "events": [],
+    "markers": []
+  }
+}
+```
+
+**Errors:** `404` with `{"error": {"message": "...", "type": "not_found"}}` for an unknown id.
+
 ### GET /admin/system-info
 
 Get system information.
@@ -726,6 +840,50 @@ curl http://localhost:5918/admin/accounts/account-0/check \
   "checked_at": "2025-05-17T10:30:00Z",
   "response_time_ms": 250
 }
+```
+
+### POST /admin/accounts/{id}/status
+
+Enable or disable one account at runtime.
+
+**Request:**
+```bash
+curl -X POST http://localhost:5918/admin/accounts/account-0/status \
+  -H "Authorization: Bearer sk-your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "account": {"account_id": "account-0", "status": "disabled", "enabled": false}
+}
+```
+
+A disabled account is skipped by the rotation, but its cookies, counters and health history are
+kept, so enabling it again restores the previous state. The change is **runtime-only**: it is not
+written to `accounts.json` and does not survive a restart (an account that silently comes back
+after a restart would be a worse surprise than one that has to be re-disabled).
+
+**Errors:** `404` with `{"error": {"message": "...", "type": "not_found"}}` for an unknown id.
+
+### POST /admin/argon/reset
+
+Close the Argon stall circuit breaker by hand instead of waiting out
+`ARGON_STALL_BREAKER_SECONDS`. The next request tries Argon again and may wait for the full
+timeout once more.
+
+**Request:**
+```bash
+curl -X POST http://localhost:5918/admin/argon/reset \
+  -H "Authorization: Bearer sk-your-api-key"
+```
+
+**Response:**
+```json
+{"status": "ok", "breaker": {"enabled": true, "is_open": false, "trips": 0}}
 ```
 
 ### PUT /admin/accounts/{id}/cookies
@@ -1270,6 +1428,50 @@ curl -X POST http://localhost:5918/admin/cleanup-web-chats \
 
 > [!NOTE]
 > The cleanup task runs asynchronously and loops until all old sessions across all accounts are deleted. Check logs for completion status and deleted session counts.
+
+## Configuration reference
+
+The web console can show the *effective* configuration at runtime
+(`GET /admin/config`); this table is the static reference for the settings the console exposes.
+
+| Setting | Source | Takes effect | Notes |
+|---------|--------|---------------|-------|
+| `ROTATION_STRATEGY` | env / panel | restart | `round-robin`, `least-used`, `failover` |
+| `MAX_CONCURRENT_PER_ACCOUNT` | env / panel | restart | Slots per account; the pool capacity is `accounts × this value` |
+| `ACQUIRE_TIMEOUT` | env / panel | restart | How long a request waits for a free slot before `529` |
+| `ARGON_TIMEOUT` | env / panel | restart | Per-request Argon timeout (`0` = built-in default) |
+| `ARGON_FALLBACK_TO_FLASH` | env / panel | restart | Fallback to Flash after an Argon failure/empty answer |
+| `ARGON_STALL_BREAKER_SECONDS` | env / panel | restart | How long the stall breaker keeps Argon disabled |
+| `ARGON_SYSTEM_PROMPT` | env | restart | Merged in front of the caller's system prompt |
+| `LOG_BODIES_ENABLED` | env / panel | restart | Off by default; request/response bodies are never stored otherwise |
+| `USAGE_STATS_ENABLED` | env / panel | restart | Usage snapshots and persistence |
+| `HEALTH_CHECK_ENABLED` | env / panel | restart | Scheduled account health checks |
+| `RATE_LIMIT_ENABLED`, `RATE_LIMIT_WINDOW`, `RATE_LIMIT_MAX` | env / panel | restart | Global rate limit (off by default) |
+
+Values saved in the console's settings panel are written to `data/settings-overrides.json` and
+replayed on every startup, **overriding** the environment variable of the same name. The
+"Configuration readiness" panel in the dashboard shows which source won for every setting, which
+settings still need a restart and whether an override drifted away from the schema. Secrets
+(`API_KEY`, `ADMIN_API_KEY`, `GEMINI_PSID`, `GEMINI_PSIDTS`, …) are only reported as
+"configured"; their values are never returned.
+
+## Compatibility and migration notes
+
+- The OpenAI, Anthropic and Gemini-native endpoints, the model names, the 81-element Argon
+  payload and the accepted timeout/fallback rules are unchanged. Nothing in this release
+  requires a client change.
+- All new endpoints are additions under `/admin` and need the admin key; no existing route
+  changed its method, path, request body or response shape. `GET /admin/status` gained the
+  `slo` object and the per-account `cooldown_remaining_s` field — both additive.
+- `POST /admin/accounts/{id}/status` is new. Accounts keep their previous state until it is
+  called, and the state is not persisted, so an upgrade needs no migration step.
+- The console authenticates with a bearer token (`Authorization` header) and does not use
+  cookies. If you put the console behind a reverse proxy that adds cookies, the
+  `Authorization` header must still reach the application.
+- The new response headers (CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`,
+  `Permissions-Policy`, `Cross-Origin-Opener-Policy`) apply to every response. Inline scripts
+  inside the console are allowed by the CSP, but a custom deployment that serves its own pages
+  from the same origin should check the policy first.
 
 ## System Endpoints
 

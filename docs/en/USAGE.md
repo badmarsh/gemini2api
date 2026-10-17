@@ -25,6 +25,26 @@ The dashboard provides a system overview:
 - **Configuration**: Current rotation strategy and concurrent request limits
 - **QR Codes**: Shareable codes (customizable via `api/` directory)
 
+Operational panels (all values are bounded and redacted — no prompts, cookies or account IDs):
+
+- **Operational overview (SLO)**: request volume and error rate for the last 1h/24h/7d, TTFT
+  p50/p95, the maximum inter-chunk gap, the Argon breaker state, the fallback rate,
+  regeneration-budget exhaustion and the account-pool saturation. The state is `ok`, `degraded`
+  or `unknown`; a missing signal is never shown as "healthy". The auto-refresh can be paused
+  (the choice survives a reload) and the Argon breaker can be reset by hand (with a
+  confirmation).
+- **Request explorer**: look up a single request by its ID and see the correlated timeline
+  (ingress/egress timestamps, TTFT, total duration, inter-chunk gaps, requested vs. actual
+  model, fallback reason, parser failure class, regeneration count, stream markers, finish
+  reason). The filter is remembered between reloads. Request and response bodies are never
+  included.
+- **Configuration readiness**: the effective configuration with the source of every value
+  (environment variable, panel override or default), which settings need a restart, validation
+  problems and override drift. Secrets are only shown as "configured".
+- **Account status**: per account the requests in use vs. the capacity, the remaining cooldown,
+  the failure/empty streaks, the session health and the last success. "Check", "Enable/Disable"
+  and the breaker reset are confirmation-protected; cookies are never displayed.
+
 ### Account Management
 
 Manage your Google accounts:
