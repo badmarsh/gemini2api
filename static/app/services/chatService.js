@@ -5,6 +5,7 @@
 
 import { APP_CONSTANTS } from '../config/constants.js';
 import { safeStorage } from './storageService.js';
+import { touchSession } from '../auth.js';
 import { validatePlaygroundPayload } from './validationService.js';
 import { RingBuffer } from './telemetryService.js';
 
@@ -88,6 +89,9 @@ export class ChatService {
         const timeoutTimer = setTimeout(() => {
             controller.abort(new Error(`Stream request timed out after ${APP_CONSTANTS.TIMEOUTS.STREAM_DEFAULT / 1000}s`));
         }, APP_CONSTANTS.TIMEOUTS.STREAM_DEFAULT);
+        // Keep the admin session alive for as long as the stream is in flight (see auth.touchSession).
+        touchSession();
+        const sessionKeepAlive = setInterval(touchSession, 30000);
         const armIdle = () => {
             clearTimeout(idleTimer);
             idleTimer = setTimeout(() => {
@@ -179,6 +183,7 @@ export class ChatService {
             }
             throw err;
         } finally {
+            clearInterval(sessionKeepAlive);
             clearTimeout(timeoutTimer);
             clearTimeout(idleTimer);
             if (this._currentAbortController === controller) {

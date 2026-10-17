@@ -19,12 +19,24 @@ function _resetSessionTimer() {
     }, SESSION_TIMEOUT);
 }
 
+let _sessionWatching = false;
+
 function _initSessionWatcher() {
+    if (_sessionWatching) return;
+    _sessionWatching = true;
     const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
     events.forEach(evt => {
         document.addEventListener(evt, _resetSessionTimer, { passive: true });
     });
     _resetSessionTimer();
+}
+
+/**
+ * Count background work as activity. A playground stream can run for minutes with no input
+ * (Argon TTFT is 2-4 min); without this the 5 min idle logout could fire mid-response.
+ */
+function touchSession() {
+    if (_sessionWatching) _resetSessionTimer();
 }
 
 /**
@@ -208,6 +220,7 @@ export {
     saveToken,
     clearToken,
     logout,
+    touchSession,
     apiCall,
     initAuth,
     login,
