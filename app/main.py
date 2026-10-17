@@ -398,7 +398,7 @@ def _debug_error_class(request: Request, status: int, raw: bytes = b"") -> str:
     return ""
 
 
-def _debug_fallback(response, raw: bytes = b"") -> tuple[bool, str, str]:
+def _debug_fallback(response, raw: bytes = b"", requested_model: str | None = None) -> tuple[bool, str, str]:
     headers = getattr(response, "headers", {})
     served_by = (headers.get("X-Gemini2API-Argon-Served-By") or "").strip()
     reason = (headers.get("X-Gemini2API-Argon-Fallback-Reason") or "").strip()
@@ -420,6 +420,14 @@ def _debug_fallback(response, raw: bytes = b"") -> tuple[bool, str, str]:
             fallback_used = bool(served_by and served_by != "argon" and "or-" not in served_by)
             if served_by == "argon-or-gemini-flash-thinking":
                 served_by = "argon"
+    if not served_by and requested_model:
+        # Only Argon requests carry a served-by marker. Without one, a non-Argon request was answered
+        # by the model it asked for; defaulting to "argon" mislabelled all Flash/Pro traffic and made
+        # the requested-vs-served comparison useless.
+        from app.core.argon_fallback import is_argon_model
+
+        if not is_argon_model(requested_model):
+            served_by = str(requested_model)[:64]
     return fallback_used, reason, served_by or "argon"
 
 
@@ -434,7 +442,7 @@ def _add_debug_log(request: Request, response, *, path: str, method: str, model:
     ingress_ts = datetime.fromtimestamp(
         _time.time() - total_ms / 1000.0, tz=timezone.utc
     ).isoformat()
-    fallback_used, fallback_reason, served_by = _debug_fallback(response, raw)
+    fallback_used, fallback_reason, served_by = _debug_fallback(response, raw, model)
     error_class = _debug_error_class(request, status, raw)
     account_hash = getattr(request.state, "account_hash", "") or ""
     regenerations = int(getattr(request.state, "regenerations", 0) or 0)

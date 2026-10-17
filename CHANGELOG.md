@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Fixed
+- **Request diagnostics no longer report every non-Argon request as `served_by="argon"`.** `_debug_fallback`
+  defaulted to `argon` whenever the Argon-only served-by header was absent, so a plain `gemini-flash` chat was
+  recorded as served by Argon - which defeated the requested-vs-served comparison that exposes a silent Flash
+  substitution for Argon. A non-Argon request with no marker now reports the model it asked for; Argon requests
+  and every explicit marker (header, stream marker, stall breaker) behave as before.
 - **The refresher pushes only cookies that changed, and logs why a cookie source was skipped.** A result is
   marked `unchanged` when it equals the pair the pool already holds; such an account is not pushed while
   `/admin/accounts` reports it active and healthy (any doubt still pushes). Every skipped source
