@@ -139,6 +139,24 @@ and it is confirmed real.
 | — | SSRF / file-serving | **already implemented** — see §5; close the doc item, add a coverage test | n/a |
 | — | OTel push exporter | documented deliberate non-goal (open point 6); leave as-is | n/a |
 
+## 7b. Minor inconsistency found in passing
+
+`.gitignore` ends with:
+
+```
+# Local evaluation runs and tuning state
+evals/state.json
+```
+
+but `git ls-files --error-unmatch evals/state.json` succeeds — the file **is tracked**. The ignore
+rule is therefore inert (git only honours ignore for untracked paths), so local tuning state is
+committed and will show up as diff noise on every future `evals/tune.py --resume` run. The audit
+itself relies on this ("stav v `evals/state.json`"), so it is not a false claim — just a stated
+intent that the repository does not actually enforce. Either untrack it
+(`git rm --cached evals/state.json`) or drop the misleading ignore line; pick one deliberately.
+`evals/reports/*.json|md` are tracked and should stay that way, since the audit cites the report as
+evidence.
+
 ## 8. Bottom line
 
 `AUDIT_SK.md` is a faithful, evidence-backed report. Its baseline/final gate table, its

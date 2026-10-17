@@ -14,11 +14,12 @@ files, endpoints, test counts, the CI run `39040306228` and commit `05e7604` are
 redo, re-litigate, or "re-verify" that work.** Treat it as a trusted baseline.
 
 Your job is to **fully close** the critique that verification proved is still open. Eight gaps,
-labelled **A–H** below, each with the evidence that it is genuinely absent. One item the previous
+labelled **A–H** below, plus one documentation correction (**I**) and one hygiene item (**J**), each with the evidence that it is genuinely absent. One item the previous
 audit listed as open (**SSRF / file-serving**) was proven **already implemented** — you must close
 it as a documentation/coverage correction, not re-implement it.
 
-Work in this order: **A → B → C → D → H → E → F → G**. A and B are P0 and must land first.
+Work in this order: **A → B → C → D → H → E → F → G**, then the correction **I** and the hygiene
+item **J**. A and B are P0 and must land first.
 
 ---
 
@@ -408,11 +409,23 @@ increase is documented in your final report.
   list and record that verification found it already implemented, with the file references above.
   Leaving a done item on an open list is how the next audit wastes a cycle.
 
+### J — Trivial hygiene: `evals/state.json` is tracked but declared ignored
+
+**Evidence.** `.gitignore` lists `evals/state.json` under "Local evaluation runs and tuning state",
+yet `git ls-files --error-unmatch evals/state.json` succeeds — the file is tracked, so the ignore
+rule is inert. Every future `evals/tune.py --resume` run will dirty the diff.
+
+**Required outcome.** Decide deliberately and do exactly one: `git rm --cached evals/state.json`
+(keep the ignore rule, stop tracking local tuning state), or remove the misleading `.gitignore`
+line (accept that tuning state is versioned). State the choice and its reason in `CHANGELOG.md`.
+Leave `evals/reports/20261016T225213Z-30667a.json` and `.md` **tracked** — the audit cites them as
+evidence and they are the reproducible artifact, unlike the mutable resume state.
+
 ---
 
 ## Deliverables and final report
 
-1. Code + tests for A–I, committed incrementally (one logical gap per commit, message stating the
+1. Code + tests for A–J, committed incrementally (one logical gap per commit, message stating the
    behavioural fix). Each gap lands with its tests **in the same commit** — no commit that turns a
    gate red.
 2. `CHANGELOG.md` `[Unreleased]` entries for every behavioural change.
@@ -423,7 +436,7 @@ increase is documented in your final report.
 6. A final report, in the same evidence-first style as the existing audits, containing:
    - the exact final gate output (unit count, evals count, ruff result) — actual pasted output, not
      a claim;
-   - for each gap A–I: what was changed, the files touched, and the test names that prove it;
+   - for each gap A–J: what was changed, the files touched, and the test names that prove it;
    - an explicit **RED → GREEN** demonstration for at least A, B, C and D (show the new test failing
      against the pre-change code, then passing);
    - anything you decided **not** to do, with the reason — the existing "Zámerné non-fixy" section is
@@ -436,6 +449,6 @@ increase is documented in your final report.
 All three gates green with counts ≥ the baseline (`1104` / `240` / ruff clean); gaps A, B, C, D
 closed with tests and RED→GREEN evidence; H decided and implemented; E, F, G closed or, if you make
 a principled scoping call to defer one, the deferral is explicitly justified in the final report
-rather than silently dropped; SSRF item corrected in the docs and pinned by a coverage test; no
-existing test weakened; no secret, prompt, cookie, account id, or runtime-state file in the diff;
-five-locale i18n parity preserved exactly.
+rather than silently dropped; SSRF item corrected in the docs and pinned by a coverage test (I);
+`evals/state.json` tracking resolved deliberately (J); no existing test weakened; no secret, prompt,
+cookie, account id, or runtime-state file in the diff; five-locale i18n parity preserved exactly.
