@@ -72,12 +72,11 @@ jobs:
         run: pytest evals -q -p no:cacheprovider
 
   test-python-3-14:
-    name: Test (Python 3.14, advisory)
+    name: Test (Python 3.14)
     runs-on: ubuntu-latest
     # Python 3.14 could not be executed in the authoring sandbox (no `py`
-    # launcher), so this job is advisory until a first green run is observed.
-    # Promote it to a hard gate once the dependency set is proven on 3.14.
-    continue-on-error: true
+    # launcher), so this job started as advisory. Its first real run was green
+    # (ruff + pytest on 3.14), so it is a hard gate now.
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -24,11 +24,15 @@ ani identifikátory účtov; diagnostika používa nanajvýš krátky jednosmern
 | Ruff | čistý | čistý (`python -m ruff check .`) |
 | Eval suite | 240 passed | **240 passed** (`pytest evals -q -p no:cacheprovider`) |
 | T0 | existujúce deterministické fake-upstream baseline súbory | **52 records, bez abortu**; report `evals/reports/20261016T225213Z-30667a.json` (resume: `{"run_id": "20261016T225213Z-30667a", "tier": "t0", "records": 52, "aborted": false}`) |
-| Python 3.14 príkaz | v sandboxe chýba `py` launcher | použitá kontrolná Python 3.11; **pridaná CI jobina `test-python-3-14` (advisory)**; 3.14 brána zostáva explicitne otvorená |
+| Python 3.14 brána | v sandboxe chýba `py` launcher | **zelená v CI** (`test-python-3-14`: ruff + pytest na 3.14, beh `39040306228`); lokálne overené len na Python 3.11 |
 
 Pôvodný `py -3.14 -m pytest -q` nebolo možné v tomto sandboxe vykonať, pretože launcher `py`
-neexistuje. Toto nie je vydávané za úspešný Python 3.14 test. Nová CI jobina je preto
-`continue-on-error: true` (advisory) a má sa po prvom zelenom behu povýšiť na tvrdú bránu.
+neexistuje. Toto nie je vydávané za úspešný lokálny Python 3.14 test. CI jobina `test-python-3-14`
+preto vznikla ako advisory (`continue-on-error: true`) a po prvom zelenom behu bola povýšená na
+tvrdú bránu. Jediná odchýlka oproti produkčným pinom: `pydantic==2.11.3` ťahne
+`pydantic-core 2.33.2`, ktorý nemá cp314 wheel (build zo zdroja by potreboval Rust toolchain), preto
+jobina inštaluje `pydantic>=2.12`. `requirements.txt` zostáva nezmenený a testy sú zelené aj s
+novším pydantic (1104 passed).
 
 ## Zistenia a dôkaz RED → GREEN
 
@@ -183,8 +187,10 @@ nezobrazuje v texte, iba v `data-` atribúte. Dôkaz:
 
 ## Otvorené body
 
-1. Python 3.14 brána: nová CI jobina `test-python-3-14` je advisory (`continue-on-error`), kým
-   na hostiteľovi s `py -3.14` neprebehne zelený beh; potom ju treba povýšiť na tvrdú bránu.
+1. Python 3.14 brána je zelená v CI (`test-python-3-14`, beh `39040306228`), ale lokálne ju
+   stále nebolo možné spustiť (v sandboxe chýba `py` launcher). Zostáva otvorené: priamo na
+   hostiteľovi s `py -3.14` overiť aj produkčné piny (`pydantic==2.11.3` nemá cp314 wheel) a
+   rozhodnúť, či sa má dependency pin zdvihnúť aj pre produkciu.
 2. T1/T2 live spot check je voliteľný a závisí od explicitného bezpečného endpointu; v tomto
    sandboxe sa nesmie hádať Google URL ani čítať lokálne credentials.
 3. Diagnostika je zámerne bounded/in-memory; nie je to dlhodobý tracing backend.

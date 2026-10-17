@@ -118,6 +118,10 @@ All notable changes to this project will be documented in this file. The format 
   status changes, empty/loading/error states, `prefers-reduced-motion` support, a pause/resume button for the
   auto-refresh (the state survives a reload) and a persisted request-explorer filter. All new UI strings exist in
   all five languages (`zh-CN`, `en-US`, `ja-JP`, `ko-KR`, `zh-TW`).
+- **CI gates**: the offline eval suite (`pytest evals -q -p no:cacheprovider`, not collected by the default
+  pytest run) is now its own job, and a Python 3.14 job runs ruff + pytest. The 3.14 job installs
+  `pydantic>=2.12` because the pinned `pydantic==2.11.3` pulls a `pydantic-core` without a cp314 wheel;
+  `requirements.txt` itself is unchanged.
 
 ## [1.7.1] - 2026-10-14 (badmarsh/gemini2api v1.7.1)
 
