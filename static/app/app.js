@@ -73,6 +73,25 @@ function activateSection(sectionId, updateHash = true) {
 
     loadSectionData(sectionId);
     window.scrollTo(0, 0);
+    focusSectionHeading(sectionId);
+}
+
+// Move the keyboard focus to the heading of the section that was just opened, so
+// a screen-reader or keyboard user continues inside the new view instead of at the
+// top of the navigation.
+function focusSectionHeading(sectionId) {
+    const section = document.getElementById(sectionId);
+    if (!section) return;
+    const heading = section.querySelector('h2, h3');
+    if (!heading) return;
+    if (!heading.hasAttribute('tabindex')) {
+        heading.setAttribute('tabindex', '-1');
+    }
+    try {
+        heading.focus({ preventScroll: true });
+    } catch (error) {
+        heading.focus();
+    }
 }
 
 function renderSectionErrorBoundary(sectionId, error) {
@@ -154,8 +173,50 @@ function settleDashboardResults(statusRes, sysRes) {
 // Pure: should the periodic dashboard refresh run right now?
 function shouldAutoRefresh(s) {
     if (!s) return false;
-    return s.activeSection === 'dashboard' && !s.hidden && !s.inFlight
+    return s.activeSection === 'dashboard' && !s.hidden && !s.inFlight && !s.paused
         && (s.now - s.lastLoadAt) >= s.intervalMs;
+}
+
+// Is the periodic dashboard refresh paused by the operator? The choice is stored
+// so it survives a reload.
+function isDashboardRefreshPaused() {
+    try {
+        return safeStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.DASHBOARD_REFRESH_PAUSED) === '1';
+    } catch (error) {
+        return false;
+    }
+}
+
+// Pause or resume the periodic dashboard refresh and remember the choice.
+function setDashboardRefreshPaused(paused) {
+    try {
+        if (paused) {
+            safeStorage.setItem(APP_CONSTANTS.STORAGE_KEYS.DASHBOARD_REFRESH_PAUSED, '1');
+        } else {
+            safeStorage.removeItem(APP_CONSTANTS.STORAGE_KEYS.DASHBOARD_REFRESH_PAUSED);
+        }
+    } catch (error) {
+        // A storage failure must not break the toggle itself.
+    }
+    updateRefreshToggleButton();
+}
+
+// Keep the toggle button in sync with the current state (label + aria-pressed).
+function updateRefreshToggleButton() {
+    const btn = document.getElementById('dashboardRefreshToggleBtn');
+    if (!btn) return;
+    const paused = isDashboardRefreshPaused();
+    btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+    const label = btn.querySelector('span[data-i18n]');
+    if (label) {
+        label.textContent = paused ? t('dashboard.resumeRefresh') : t('dashboard.pauseRefresh');
+    }
+    btn.setAttribute('title', paused ? t('dashboard.resumeRefresh') : t('dashboard.pauseRefresh'));
+}
+
+// Toggle the periodic dashboard refresh.
+function toggleDashboardRefresh() {
+    setDashboardRefreshPaused(!isDashboardRefreshPaused());
 }
 
 // Per-card error notice: shown when only one of the dashboard requests failed, so the other
@@ -224,10 +285,18 @@ async function loadDashboard(opts) {
             setText('info-strategy', strategyMap[data.strategy] || data.strategy);
             setText('info-concurrent', data.max_concurrent_per_account || '-');
 
-            renderAccountStatusGrid(accounts);
+            renderAccountStatusGrid(accounts, data);
             renderModelsList(modelsSet);
             updatePlaygroundModels(modelsSet);
             if (typeof renderDebugMetrics === 'function') renderDebugMetrics(data.debug_metrics);
+            if (typeof renderSloOverview === 'function') renderSloOverview(data.slo);
+        }
+        if (typeof loadRequestExplorerData === 'function') {
+            // Fire and forget: a failing explorer must not fail the dashboard.
+            loadRequestExplorerData();
+        }
+        if (typeof loadConfigReadiness === 'function') {
+            loadConfigReadiness();
         }
         if (view.sys) applySystemInfo(view.sys);
 
@@ -263,6 +332,7 @@ function startDashboardAutoRefresh() {
             activeSection: active ? active.id : '',
             hidden: document.hidden,
             inFlight: _dashboardLoading,
+            paused: isDashboardRefreshPaused(),
             lastLoadAt: _dashboardLastLoadAt,
             now: Date.now(),
             intervalMs: DASHBOARD_REFRESH_MS,
@@ -387,7 +457,47 @@ function _accountHealthRow(account) {
             </div>`;
 }
 
-function renderAccountStatusGrid(accounts) {
+// Operational view of one account: slots in use, cooldown, session health.
+// Returns the extra rows for the account card (never the raw account id).
+function _accountOperationsRows(account, maxConcurrent) {
+    if (!account) return '';
+    const limit = Number(maxConcurrent) || 0;
+    const active = Number(account.active_requests) || 0;
+    const cooldown = Number(account.cooldown_remaining_s) || 0;
+    const rows = [];
+    if (limit > 0) {
+        rows.push(`<div class="account-detail">
+            <span class="label">${escapeHtml(t('accounts.slotsInUse'))}</span>
+            <span class="value">${escapeHtml(String(active))} / ${escapeHtml(String(limit))}</span>
+        </div>`);
+    }
+    if (cooldown > 0) {
+        rows.push(`<div class="account-detail">
+            <span class="label">${escapeHtml(t('accounts.cooldownRemaining'))}</span>
+            <span class="value">${escapeHtml(String(Math.round(cooldown)))} s</span>
+        </div>`);
+    }
+    if (account.is_healthy === false) {
+        rows.push(`<div class="account-detail">
+            <span class="label">${escapeHtml(t('accounts.sessionHealth'))}</span>
+            <span class="value text-danger">${escapeHtml(t('accounts.sessionUnhealthy'))}</span>
+        </div>`);
+    }
+    return rows.join('');
+}
+
+// Confirmation-protected actions for one account. The account id never reaches
+// the visible text: it only travels in the data attribute the click handler uses.
+function _accountActionButtons(account) {
+    if (!account || !account.id) return '';
+    const disabled = account.status === 'disabled';
+    return `<div class="account-actions">
+        <button type="button" class="btn btn-sm btn-outline" data-account-action="check" data-account-id="${escapeAttr(account.id)}">${escapeHtml(t('accounts.actionCheck'))}</button>
+        <button type="button" class="btn btn-sm btn-outline" data-account-action="toggle" data-account-enabled="${disabled ? 'false' : 'true'}" data-account-id="${escapeAttr(account.id)}">${escapeHtml(disabled ? t('accounts.actionEnable') : t('accounts.actionDisable'))}</button>
+    </div>`;
+}
+
+function renderAccountStatusGrid(accounts, pool) {
     const container = document.getElementById('accountStatusGrid');
     if (!container) return;
 
@@ -395,6 +505,8 @@ function renderAccountStatusGrid(accounts) {
         container.innerHTML = `<div class="empty-state"><i class="fas fa-server"></i> ${escapeHtml(t('accounts.noAccounts'))}</div>`;
         return;
     }
+
+    const maxConcurrent = (pool && pool.max_concurrent_per_account) || 0;
 
     // Security: escape account.label before rendering to prevent stored XSS
     container.innerHTML = accounts.map(account => `
@@ -422,9 +534,48 @@ function renderAccountStatusGrid(accounts) {
             <div class="account-detail">
                 <span class="label">${t('accounts.lastSuccess')}</span>
                 <span class="value">${escapeHtml(formatDate(account.last_success_at))}</span>
-            </div>${_accountHealthRow(account)}${_accountEmptyRow(account)}
+            </div>${_accountOperationsRows(account, maxConcurrent)}${_accountHealthRow(account)}${_accountEmptyRow(account)}
+            ${_accountActionButtons(account)}
         </div>
     `).join('');
+
+    container.querySelectorAll('[data-account-action]').forEach(button => {
+        button.addEventListener('click', () => handleAccountAction(
+            button.dataset.accountAction, button.dataset.accountId, button));
+    });
+}
+
+// Run one account action after the operator confirmed it.
+async function handleAccountAction(action, accountId, button) {
+    if (!action || !accountId) return;
+    if (action === 'check') {
+        try {
+            await apiCall('GET', `${APP_CONSTANTS.ROUTES.ADMIN_ACCOUNTS}/${encodeURIComponent(accountId)}/check`);
+        } catch (error) {
+            showToast(String(error && error.message ? error.message : error), 'error');
+        }
+        loadDashboard({ background: true });
+        return;
+    }
+    if (action === 'toggle') {
+        // The current state travels in the data attribute of the clicked button,
+        // so no account id ever has to be embedded into a CSS selector.
+        const currentlyEnabled = !button || button.getAttribute('data-account-enabled') !== 'false';
+        const confirmed = await showConfirm({
+            title: t('accounts.actionToggleTitle'),
+            message: t('accounts.actionToggleMessage'),
+            confirmText: t('accounts.actionToggleConfirm'),
+            type: 'warning'
+        });
+        if (!confirmed) return;
+        try {
+            await apiCall('POST', `${APP_CONSTANTS.ROUTES.ADMIN_ACCOUNTS}/${encodeURIComponent(accountId)}/status`,
+                { enabled: !currentlyEnabled });
+        } catch (error) {
+            showToast(String(error && error.message ? error.message : error), 'error');
+        }
+        loadDashboard({ background: true });
+    }
 }
 
 function renderModelsList(modelsSet) {
@@ -481,9 +632,12 @@ function renderDebugMetrics(summary) {
             ? buckets.map(([label, value]) => {
                 const count = Number(value) || 0;
                 const height = Math.max(2, Math.round((count / max) * 100));
-                return `<div class="debug-histogram-item" role="listitem" title="${escapeAttr(String(count))}">
+                // Screen readers get the bucket and its count as one label instead of
+                // three disconnected numbers.
+                const accessible = label + ': ' + count;
+                return `<div class="debug-histogram-item" role="listitem" title="${escapeAttr(String(count))}" aria-label="${escapeAttr(accessible)}">
                     <span>${escapeHtml(String(count))}</span>
-                    <span class="debug-histogram-bar" style="height:${height}%"></span>
+                    <span class="debug-histogram-bar" style="height:${height}%" aria-hidden="true"></span>
                     <span>${escapeHtml(label)}</span>
                 </div>`;
             }).join('')
@@ -500,6 +654,387 @@ function renderDebugMetrics(summary) {
     };
     renderBreakdown('debug-served-by', data.served_by);
     renderBreakdown('debug-error-classes', data.error_classes);
+}
+
+// ============================================================================
+// Operational overview (SLO)
+// ============================================================================
+
+// Map a backend SLO reason to its translation key. An unknown reason is rendered
+// as the raw id instead of a missing-key placeholder.
+const SLO_REASON_KEYS = {
+    breaker_open: 'dashboard.sloReasonBreaker',
+    error_rate: 'dashboard.sloReasonErrorRate',
+    fallback_rate: 'dashboard.sloReasonFallbackRate',
+    ttft_p95: 'dashboard.sloReasonTtft',
+    inter_chunk_gap: 'dashboard.sloReasonGap',
+    pool_saturated: 'dashboard.sloReasonSaturated',
+    pool_slot_leak: 'dashboard.sloReasonSlotLeak',
+    regeneration_budget_exhausted: 'dashboard.sloReasonBudget'
+};
+
+// Pure: map the backend SLO state to its label key and CSS modifier. Anything the
+// backend does not know is rendered as "unknown" -- never as a green "ok".
+function sloStateDescriptor(state) {
+    const known = ['ok', 'degraded', 'unknown'];
+    const normalized = known.indexOf(state) >= 0 ? state : 'unknown';
+    const suffix = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    return {
+        state: normalized,
+        labelKey: 'dashboard.sloState' + suffix,
+        className: 'slo-state slo-state--' + normalized
+    };
+}
+
+// Pure: a ratio (0..1) as a percentage string.
+function formatRatio(ratio) {
+    const value = Number(ratio);
+    if (!isFinite(value)) return '-';
+    return (value * 100).toFixed(1) + '%';
+}
+
+// Pure: milliseconds as a short human duration.
+function formatDurationMs(value) {
+    const ms = Number(value);
+    if (!isFinite(ms) || ms <= 0) return '-';
+    if (ms < 1000) return Math.round(ms) + ' ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + ' s';
+    return (ms / 60000).toFixed(1) + ' min';
+}
+
+// Render a list of label/value pairs into a <dl>.
+function renderSloMetrics(id, items) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = (items || []).map(item =>
+        `<div class="slo-metric"><dt>${escapeHtml(item.label)}</dt><dd>${escapeHtml(item.value)}</dd></div>`
+    ).join('');
+}
+
+// Reset the Argon stall breaker by hand. Confirmation protected: the next
+// request tries Argon again and may wait for the full timeout once more.
+async function resetArgonBreaker() {
+    const confirmed = await showConfirm({
+        title: t('dashboard.breakerResetTitle'),
+        message: t('dashboard.breakerResetMessage'),
+        confirmText: t('dashboard.breakerResetConfirm'),
+        type: 'warning'
+    });
+    if (!confirmed) return;
+    try {
+        await apiCall('POST', APP_CONSTANTS.ROUTES.ADMIN_ARGON_RESET);
+    } catch (error) {
+        showToast(String(error && error.message ? error.message : error), 'error');
+    }
+    loadDashboard({ background: true });
+}
+
+// Render the operational overview: request volume, error/fallback rates, latency
+// percentiles, breaker state and account-pool capacity. Bounded and redacted --
+// no prompts, no account identifiers, no request bodies.
+function renderSloOverview(slo) {
+    const data = (slo && typeof slo === 'object') ? slo : {};
+    const descriptor = sloStateDescriptor(data.state);
+
+    const chip = document.getElementById('slo-state');
+    if (chip) {
+        chip.className = descriptor.className;
+        chip.textContent = t(descriptor.labelKey);
+    }
+
+    const reasons = document.getElementById('slo-reasons');
+    if (reasons) {
+        const list = Array.isArray(data.reasons) ? data.reasons : [];
+        reasons.textContent = list.length
+            ? t('dashboard.sloReasonsLabel') + ': ' + list.map(reason => {
+                const key = SLO_REASON_KEYS[reason];
+                return key ? t(key) : String(reason);
+            }).join(', ')
+            : '';
+    }
+
+    const windows = (data.windows && typeof data.windows === 'object') ? data.windows : {};
+    const rows = document.getElementById('slo-window-rows');
+    if (rows) {
+        const order = ['1h', '24h', '7d'];
+        const extra = Object.keys(windows).filter(key => order.indexOf(key) < 0);
+        const keys = order.filter(key => windows[key]).concat(extra);
+        rows.innerHTML = keys.length
+            ? keys.map(key => {
+                const window = windows[key] || {};
+                return `<tr>
+                    <th scope="row">${escapeHtml(key)}</th>
+                    <td>${escapeHtml(formatNumber(window.requests || 0))}</td>
+                    <td>${escapeHtml(formatRatio(window.error_rate))}</td>
+                    <td>${escapeHtml(formatRatio(window.fallback_rate))}</td>
+                </tr>`;
+            }).join('')
+            : `<tr><td colspan="4" class="text-muted">${escapeHtml(t('dashboard.sloNoData'))}</td></tr>`;
+    }
+
+    const current = windows['1h'] || {};
+    const ttft = current.ttft_ms || {};
+    const latency = current.latency_ms || {};
+    renderSloMetrics('slo-latency', [
+        { label: t('dashboard.sloTtftP50'), value: formatDurationMs(ttft.p50) },
+        { label: t('dashboard.sloTtftP95'), value: formatDurationMs(ttft.p95) },
+        { label: t('dashboard.sloLatencyP50'), value: formatDurationMs(latency.p50) },
+        { label: t('dashboard.sloLatencyP95'), value: formatDurationMs(latency.p95) },
+        { label: t('dashboard.sloMaxGap'), value: formatDurationMs(current.max_inter_chunk_gap_ms) }
+    ]);
+
+    const pool = data.pool || {};
+    const breaker = data.breaker || {};
+    const budget = data.budget || {};
+
+    // The breaker reset is only offered while the breaker is actually open.
+    const breakerBtn = document.getElementById('argonBreakerResetBtn');
+    if (breakerBtn) {
+        breakerBtn.hidden = !breaker.open;
+    }
+    renderSloMetrics('slo-pool', [
+        {
+            label: t('dashboard.sloBreaker'),
+            value: breaker.open ? t('dashboard.sloBreakerOpen') : t('dashboard.sloBreakerClosed')
+        },
+        {
+            label: t('dashboard.sloCapacity'),
+            value: formatNumber(pool.active_requests || 0) + ' / ' + formatNumber(pool.capacity || 0)
+        },
+        { label: t('dashboard.sloSaturation'), value: formatRatio(pool.saturation) },
+        { label: t('dashboard.sloCooldown'), value: formatNumber(pool.cooling_accounts || 0) },
+        { label: t('dashboard.sloSlotLeak'), value: formatNumber(pool.slot_leak_accounts || 0) },
+        {
+            label: t('dashboard.sloRegenerations'),
+            value: formatNumber(budget.allowed || 0) + ' / ' + formatNumber(budget.blocked || 0)
+        }
+    ]);
+}
+
+// ============================================================================
+// Request explorer
+// ============================================================================
+
+// The retained diagnostics records the explorer renders (bounded by the backend).
+let _explorerRecords = [];
+let _explorerSelectedId = '';
+
+// Pure: does a record match the filter text? The filter looks at operational
+// fields only -- never at a body, a prompt or an account identifier.
+function explorerMatchesFilter(record, query) {
+    const needle = String(query || '').trim().toLowerCase();
+    if (!needle) return true;
+    if (!record || typeof record !== 'object') return false;
+    const fields = [
+        'request_id', 'model', 'served_by', 'status', 'error_class',
+        'fallback_reason', 'parser_failure', 'finish_reason', 'path'
+    ];
+    return fields.some(key => String(record[key] == null ? '' : record[key]).toLowerCase().indexOf(needle) >= 0);
+}
+
+// Pure: the table body for the given records.
+function explorerRows(records, query, selectedId) {
+    const filtered = (records || []).filter(record => explorerMatchesFilter(record, query));
+    if (!filtered.length) {
+        return {
+            html: `<tr><td colspan="6" class="text-muted">${escapeHtml(t('dashboard.explorerNoData'))}</td></tr>`,
+            count: 0
+        };
+    }
+    const rows = filtered.slice(-50).reverse();
+    const html = rows.map(record => {
+        const id = String(record.request_id || '');
+        const selected = id && id === selectedId;
+        return `<tr class="explorer-row${selected ? ' explorer-row--selected' : ''}">
+            <td>${escapeHtml(formatExplorerTime(record.ingress_ts || record.ts))}</td>
+            <td><button type="button" class="explorer-open" data-request-id="${escapeAttr(id)}">${escapeHtml(id || '-')}</button></td>
+            <td>${escapeHtml(String(record.model || '-'))}</td>
+            <td>${escapeHtml(String(record.status == null ? '-' : record.status))}</td>
+            <td>${escapeHtml(formatDurationMs(record.ttft_ms))}</td>
+            <td>${escapeHtml(formatDurationMs(record.total_latency_ms))}</td>
+        </tr>`;
+    }).join('');
+    return { html, count: filtered.length };
+}
+
+// Pure: format an ISO timestamp as a short local time (or the raw value).
+function formatExplorerTime(value) {
+    const text = String(value || '');
+    if (!text) return '-';
+    const parsed = new Date(text);
+    if (isNaN(parsed.getTime())) return text;
+    return parsed.toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z');
+}
+
+// Render the table and keep the row buttons wired to the drill-down.
+function renderRequestExplorer(records) {
+    _explorerRecords = Array.isArray(records) ? records : [];
+    const filterInput = document.getElementById('explorerFilter');
+    const query = filterInput ? filterInput.value : '';
+    const tbody = document.getElementById('explorer-rows');
+    if (!tbody) return;
+    const result = explorerRows(_explorerRecords, query, _explorerSelectedId);
+    tbody.innerHTML = result.html;
+    const counter = document.getElementById('explorerCount');
+    if (counter) {
+        counter.textContent = result.count + ' / ' + _explorerRecords.length;
+    }
+    tbody.querySelectorAll('.explorer-open').forEach(button => {
+        button.addEventListener('click', () => openRequestDetail(button.dataset.requestId));
+    });
+}
+
+// Render the correlated timeline of one request.
+function renderRequestDetail(timeline) {
+    const el = document.getElementById('explorer-detail');
+    if (!el) return;
+    if (!timeline || typeof timeline !== 'object') {
+        el.innerHTML = `<p class="text-muted">${escapeHtml(t('dashboard.explorerNoSelection'))}</p>`;
+        return;
+    }
+    const events = (timeline.events || []).map(event =>
+        `<li><span class="explorer-event-kind">${escapeHtml(String(event.kind))}</span>` +
+        `<span class="explorer-event-at">+${escapeHtml(formatDurationMs(event.at_ms))}</span></li>`
+    ).join('');
+    const markers = (timeline.markers || []).map(marker =>
+        `<li><span class="explorer-marker-kind">${escapeHtml(String(marker.kind))}</span>` +
+        `<span class="explorer-marker-detail">${escapeHtml(String(marker.detail || ''))}</span></li>`
+    ).join('');
+    const rows = [
+        { label: t('dashboard.explorerIngress'), value: String(timeline.ingress_ts || '-') },
+        { label: t('dashboard.explorerEgress'), value: String(timeline.egress_ts || '-') },
+        { label: t('dashboard.explorerTtft'), value: formatDurationMs(timeline.ttft_ms) },
+        { label: t('dashboard.explorerDuration'), value: formatDurationMs(timeline.duration_ms) },
+        { label: t('dashboard.sloMaxGap'), value: formatDurationMs(timeline.max_inter_chunk_gap_ms) },
+        { label: t('dashboard.explorerRequestedModel'), value: String(timeline.requested_model || '-') },
+        { label: t('dashboard.explorerServingModel'), value: String(timeline.serving_model || '-') },
+        { label: t('dashboard.explorerFallback'), value: String((timeline.fallback && timeline.fallback.reason) || '-') },
+        { label: t('dashboard.explorerParser'), value: String((timeline.parser && timeline.parser.failure_class) || '-') },
+        { label: t('dashboard.explorerRegenerations'), value: formatNumber(timeline.regenerations || 0) },
+        { label: t('dashboard.explorerErrorClass'), value: String(timeline.error_class || '-') },
+        { label: t('dashboard.explorerFinishReason'), value: String(timeline.finish_reason || '-') },
+        { label: t('dashboard.explorerStream'), value: timeline.stream ? 'yes' : 'no' }
+    ];
+    el.innerHTML = `
+        <h4>${escapeHtml(String(timeline.request_id || ''))}</h4>
+        <h5>${escapeHtml(t('dashboard.explorerTimeline'))}</h5>
+        <ul class="explorer-events">${events || `<li class="text-muted">${escapeHtml(t('dashboard.explorerNoData'))}</li>`}</ul>
+        <h5>${escapeHtml(t('dashboard.explorerMarkers'))}</h5>
+        <ul class="explorer-markers">${markers || `<li class="text-muted">${escapeHtml(t('dashboard.explorerNoData'))}</li>`}</ul>
+        <dl class="slo-metrics">${rows.map(row =>
+            `<div class="slo-metric"><dt>${escapeHtml(row.label)}</dt><dd>${escapeHtml(row.value)}</dd></div>`
+        ).join('')}</dl>`;
+}
+
+// ============================================================================
+// Configuration readiness
+// ============================================================================
+
+// Render the effective runtime configuration: value, source (environment, panel
+// override or default), restart-required markers, feature switches, credential
+// presence and validation issues. Secrets are never rendered.
+function renderConfigReadiness(report) {
+    const data = (report && typeof report === 'object') ? report : {};
+    const fields = (data.fields && typeof data.fields === 'object') ? data.fields : {};
+    const issues = (data.validation && Array.isArray(data.validation.issues)) ? data.validation.issues : [];
+    const drift = Array.isArray(data.drift) ? data.drift : [];
+
+    const state = (issues.length || drift.length) ? 'degraded' : 'ok';
+    const chip = document.getElementById('config-state');
+    if (chip) {
+        chip.className = sloStateDescriptor(state).className;
+        chip.textContent = t(sloStateDescriptor(state).labelKey);
+    }
+
+    const rows = document.getElementById('config-rows');
+    if (rows) {
+        const names = Object.keys(fields).sort();
+        rows.innerHTML = names.length
+            ? names.map(name => {
+                const field = fields[name] || {};
+                const source = String(field.source || 'default');
+                const sourceKey = 'dashboard.configSource'
+                    + source.charAt(0).toUpperCase() + source.slice(1);
+                const value = field.value === null || field.value === undefined
+                    ? '-' : String(field.value);
+                return `<tr>
+                    <th scope="row">${escapeHtml(name)}</th>
+                    <td>${escapeHtml(value)}</td>
+                    <td>${escapeHtml(t(sourceKey) || source)}</td>
+                    <td>${field.restart_required ? escapeHtml(t('dashboard.configRestartRequired')) : ''}</td>
+                </tr>`;
+            }).join('')
+            : `<tr><td colspan="4" class="text-muted">${escapeHtml(t('dashboard.configNoData'))}</td></tr>`;
+    }
+
+    const features = data.features && typeof data.features === 'object' ? data.features : {};
+    renderSloMetrics('config-features', Object.keys(features).sort().map(name => ({
+        label: name,
+        value: features[name] ? t('dashboard.configEnabled') : t('dashboard.configDisabled')
+    })));
+
+    const secrets = data.secrets && typeof data.secrets === 'object' ? data.secrets : {};
+    renderSloMetrics('config-secrets', Object.keys(secrets).sort().map(name => {
+        const secret = secrets[name] || {};
+        const state = secret.configured ? t('dashboard.configConfigured') : t('dashboard.configNotConfigured');
+        return { label: name, value: state + ' (' + String(secret.source || '-') + ')' };
+    }));
+
+    const issueList = document.getElementById('config-issues');
+    if (issueList) {
+        const entries = issues.map(issue => String(issue.field) + ': ' + String(issue.issue))
+            .concat(drift.map(item => String(item.field) + ': ' + String(item.detail || item.kind)));
+        issueList.innerHTML = entries.length
+            ? entries.map(entry => `<li><span class="explorer-marker-detail">${escapeHtml(entry)}</span></li>`).join('')
+            : `<li class="text-muted">${escapeHtml(t('dashboard.configNoIssues'))}</li>`;
+    }
+}
+
+// Load the configuration readiness report. Failures are contained.
+async function loadConfigReadiness() {
+    try {
+        const data = await apiCall('GET', APP_CONSTANTS.ROUTES.ADMIN_CONFIG);
+        renderConfigReadiness(data);
+    } catch (error) {
+        renderConfigReadiness(null);
+    }
+}
+
+// Load the retained diagnostics records for the explorer. Failures are contained:
+// the rest of the dashboard keeps working without the explorer.
+async function loadRequestExplorerData() {    try {
+        const data = await telemetryService.getDebugMetrics();
+        renderRequestExplorer((data && data.records) || []);
+    } catch (error) {
+        renderRequestExplorer([]);
+    }
+}
+
+// Load the drill-down for one request ID and render it.
+async function openRequestDetail(requestId) {    if (!requestId) return;
+    _explorerSelectedId = requestId;
+    renderRequestExplorer(_explorerRecords);
+    const el = document.getElementById('explorer-detail');
+    if (el) {
+        el.innerHTML = `<p class="text-muted">${escapeHtml(t('dashboard.loading'))}</p>`;
+    }
+    try {
+        const data = await apiCall('GET', `${APP_CONSTANTS.ROUTES.ADMIN_DEBUG_METRICS}/${encodeURIComponent(requestId)}`);
+        renderRequestDetail(data && data.request);
+    } catch (error) {
+        if (el) {
+            el.innerHTML = `<p class="text-muted">${escapeHtml(String(error && error.message ? error.message : error))}</p>`;
+        }
+    }
+    if (el && el.focus) {
+        // The keyboard focus follows the drill-down so the timeline is reachable
+        // without hunting for it.
+        try {
+            el.focus({ preventScroll: true });
+        } catch (error) {
+            el.focus();
+        }
+    }
 }
 
 // ============================================================================
@@ -1417,6 +1952,47 @@ function initEventListeners() {
     const addAccountBtn = document.getElementById('addAccountBtn');
     if (addAccountBtn) {
         addAccountBtn.addEventListener('click', openAddAccountModal);
+    }
+
+    // Request explorer: filter and manual refresh
+    const explorerFilter = document.getElementById('explorerFilter');
+    if (explorerFilter && !explorerFilter._bound) {
+        explorerFilter._bound = true;
+        // The filter is a saved filter: it survives a reload.
+        try {
+            const saved = safeStorage.getItem(APP_CONSTANTS.STORAGE_KEYS.EXPLORER_FILTER);
+            if (saved) explorerFilter.value = saved;
+        } catch (error) {
+            // A storage failure only costs the saved filter.
+        }
+        explorerFilter.addEventListener('input', () => {
+            try {
+                safeStorage.setItem(APP_CONSTANTS.STORAGE_KEYS.EXPLORER_FILTER, explorerFilter.value || '');
+            } catch (error) {
+                // Ignore: the filter still works for this session.
+            }
+            renderRequestExplorer(_explorerRecords);
+        });
+    }
+    const explorerRefresh = document.getElementById('explorerRefreshBtn');
+    if (explorerRefresh && !explorerRefresh._bound) {
+        explorerRefresh._bound = true;
+        explorerRefresh.addEventListener('click', () => loadRequestExplorerData());
+    }
+
+    // Pause / resume the periodic dashboard refresh
+    const refreshToggle = document.getElementById('dashboardRefreshToggleBtn');
+    if (refreshToggle && !refreshToggle._bound) {
+        refreshToggle._bound = true;
+        refreshToggle.addEventListener('click', () => toggleDashboardRefresh());
+    }
+    updateRefreshToggleButton();
+
+    // Reset the Argon stall breaker by hand (confirmation protected)
+    const breakerReset = document.getElementById('argonBreakerResetBtn');
+    if (breakerReset && !breakerReset._bound) {
+        breakerReset._bound = true;
+        breakerReset.addEventListener('click', () => resetArgonBreaker());
     }
 
     // Confirm add account

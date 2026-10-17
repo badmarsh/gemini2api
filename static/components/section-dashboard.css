@@ -452,3 +452,335 @@
     color: var(--text-primary);
     font-size: 0.875rem;
 }
+
+/* Operational overview (SLO) */
+.slo-panel {
+    background: var(--bg-primary);
+    padding: 1.5rem;
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.slo-panel h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.slo-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-full);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.slo-state--ok {
+    background: var(--success-bg);
+    color: var(--success-text);
+    border-color: var(--success-color);
+}
+
+.slo-state--degraded {
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    border-color: var(--danger-color);
+}
+
+.slo-state--unknown {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border-color: var(--border-color);
+}
+
+.slo-reasons {
+    margin: 0 0 1rem;
+    font-size: 0.875rem;
+    color: var(--danger-text);
+    min-height: 1.25rem;
+}
+
+.slo-reasons:empty {
+    margin-bottom: 0;
+}
+
+.slo-columns {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.5rem;
+}
+
+.slo-column h4 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 0.75rem;
+}
+
+.slo-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.slo-table th,
+.slo-table td {
+    text-align: left;
+    padding: 0.375rem 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.slo-table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.slo-metrics {
+    margin: 0;
+    display: grid;
+    gap: 0.5rem;
+}
+
+.slo-metric {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.875rem;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.375rem;
+}
+
+.slo-metric dt {
+    color: var(--text-secondary);
+}
+
+.slo-metric dd {
+    margin: 0;
+    color: var(--text-primary);
+    font-weight: 600;
+    text-align: right;
+}
+
+@media (max-width: 768px) {
+    .slo-columns {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Request explorer */
+.request-explorer {
+    background: var(--bg-primary);
+    padding: 1.5rem;
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.request-explorer h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.explorer-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.explorer-filter-label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.explorer-filter {
+    flex: 1 1 16rem;
+    min-width: 12rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+.explorer-filter:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.explorer-count {
+    font-size: 0.8125rem;
+    color: var(--text-tertiary);
+}
+
+.explorer-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 1.5rem;
+}
+
+.explorer-list {
+    overflow-x: auto;
+}
+
+.explorer-table td,
+.explorer-table th {
+    white-space: nowrap;
+}
+
+.explorer-row--selected {
+    background: var(--primary-10, rgba(5, 150, 105, 0.08));
+}
+
+.explorer-open {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--primary-color);
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.explorer-open:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+.explorer-detail {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 1rem;
+    background: var(--bg-secondary);
+    overflow-wrap: anywhere;
+}
+
+.explorer-detail h4 {
+    margin: 0 0 0.75rem;
+    font-size: 0.9375rem;
+    color: var(--text-primary);
+}
+
+.explorer-detail h5 {
+    margin: 0.75rem 0 0.375rem;
+    font-size: 0.8125rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+}
+
+.explorer-events,
+.explorer-markers {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.25rem;
+    font-size: 0.8125rem;
+}
+
+.explorer-events li,
+.explorer-markers li {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    color: var(--text-primary);
+}
+
+.explorer-event-kind,
+.explorer-marker-kind {
+    font-family: var(--font-mono, monospace);
+    color: var(--text-secondary);
+}
+
+.explorer-event-at,
+.explorer-marker-detail {
+    color: var(--text-primary);
+}
+
+@media (max-width: 768px) {
+    .explorer-columns {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Configuration readiness */
+.config-panel {
+    background: var(--bg-primary);
+    padding: 1.5rem;
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.config-panel h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.config-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 1.5rem;
+}
+
+.config-column h4 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 0.75rem;
+}
+
+.config-column h4 + .slo-metrics + h4 {
+    margin-top: 1rem;
+}
+
+@media (max-width: 768px) {
+    .config-columns {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Header actions of the operational overview (state chip + refresh toggle) */
+.slo-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.slo-header-actions .btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+/* Account operations (dashboard status cards) */
+.account-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.account-actions .btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}

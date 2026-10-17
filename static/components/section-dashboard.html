@@ -1,4 +1,4 @@
-<link rel="stylesheet" href="components/section-dashboard.css?v=5">
+<link rel="stylesheet" href="components/section-dashboard.css?v=6">
 <!-- Dashboard Section -->
 <section id="dashboard" class="section active" aria-labelledby="dashboard-title">
     <h2 id="dashboard-title" data-i18n="dashboard.title">System Overview</h2>
@@ -70,6 +70,128 @@
             <div>
                 <h4 data-i18n="dashboard.debugErrorClasses">Error classes</h4>
                 <ul id="debug-error-classes" class="debug-breakdown" aria-live="polite"></ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Operational overview (SLO) -->
+    <section class="slo-panel" aria-labelledby="slo-title">
+        <div class="system-info-header">
+            <h3 id="slo-title"><i class="fas fa-gauge-high"></i> <span data-i18n="dashboard.sloTitle">Operational overview</span></h3>
+            <div class="slo-header-actions">
+                <span id="slo-state" class="slo-state slo-state--unknown" role="status" aria-live="polite" data-i18n="dashboard.sloStateUnknown">No data</span>
+                <button id="argonBreakerResetBtn" class="btn btn-outline btn-sm" type="button" hidden
+                        data-i18n-title="dashboard.breakerReset" title="Reset breaker">
+                    <i class="fas fa-rotate-right"></i> <span data-i18n="dashboard.breakerReset">Reset breaker</span>
+                </button>
+                <button id="dashboardRefreshToggleBtn" class="btn btn-outline btn-sm" type="button" aria-pressed="false"
+                        data-i18n-title="dashboard.pauseRefresh" title="Pause auto-refresh">
+                    <i class="fas fa-pause"></i> <span data-i18n="dashboard.pauseRefresh">Pause auto-refresh</span>
+                </button>
+            </div>
+        </div>
+        <p id="slo-reasons" class="slo-reasons" role="status" aria-live="polite"></p>
+        <div class="slo-columns">
+            <div class="slo-column">
+                <h4 data-i18n="dashboard.sloVolume">Volume and errors</h4>
+                <table class="slo-table">
+                    <caption class="sr-only" data-i18n="dashboard.sloVolume">Volume and errors</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col" data-i18n="dashboard.sloWindow">Window</th>
+                            <th scope="col" data-i18n="dashboard.sloRequests">Requests</th>
+                            <th scope="col" data-i18n="dashboard.sloErrorRate">Error rate</th>
+                            <th scope="col" data-i18n="dashboard.sloFallbackRate">Fallback rate</th>
+                        </tr>
+                    </thead>
+                    <tbody id="slo-window-rows">
+                        <tr><td colspan="4" class="text-muted" data-i18n="dashboard.sloNoData">No data</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="slo-column">
+                <h4 data-i18n="dashboard.sloLatency">Latency</h4>
+                <dl class="slo-metrics" id="slo-latency"></dl>
+            </div>
+            <div class="slo-column">
+                <h4 data-i18n="dashboard.sloPool">Account pool and breaker</h4>
+                <dl class="slo-metrics" id="slo-pool"></dl>
+            </div>
+        </div>
+    </section>
+
+    <!-- Request explorer -->
+    <section class="request-explorer" aria-labelledby="request-explorer-title">
+        <div class="system-info-header">
+            <h3 id="request-explorer-title"><i class="fas fa-magnifying-glass"></i> <span data-i18n="dashboard.explorerTitle">Request explorer</span></h3>
+            <button id="explorerRefreshBtn" class="btn btn-outline btn-sm" data-i18n-title="dashboard.refresh" title="Refresh">
+                <i class="fas fa-sync-alt"></i> <span data-i18n="dashboard.refresh">Refresh</span>
+            </button>
+        </div>
+        <p class="debug-metrics-privacy" data-i18n="dashboard.explorerPrivacy">Bounded diagnostics only: request bodies, prompts, cookies and account identifiers are never shown.</p>
+        <div class="explorer-controls">
+            <label class="explorer-filter-label" for="explorerFilter" data-i18n="dashboard.explorerFilter">Filter</label>
+            <input type="search" id="explorerFilter" class="explorer-filter" autocomplete="off"
+                   data-i18n-placeholder="dashboard.explorerFilterPlaceholder" placeholder="request id, model, error class">
+            <span id="explorerCount" class="explorer-count" role="status" aria-live="polite"></span>
+        </div>
+        <div class="explorer-columns">
+            <div class="explorer-list">
+                <table class="slo-table explorer-table">
+                    <caption class="sr-only" data-i18n="dashboard.explorerTableCaption">Recent requests</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col" data-i18n="dashboard.explorerTime">Time</th>
+                            <th scope="col" data-i18n="dashboard.explorerRequest">Request</th>
+                            <th scope="col" data-i18n="dashboard.explorerModel">Model</th>
+                            <th scope="col" data-i18n="dashboard.explorerStatus">Status</th>
+                            <th scope="col" data-i18n="dashboard.explorerTtft">TTFT</th>
+                            <th scope="col" data-i18n="dashboard.explorerDuration">Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody id="explorer-rows">
+                        <tr><td colspan="6" class="text-muted" data-i18n="dashboard.explorerNoData">No data</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="explorer-detail" id="explorer-detail" role="region" aria-labelledby="request-explorer-title" aria-live="polite" tabindex="-1">
+                <p class="text-muted" data-i18n="dashboard.explorerNoSelection">Select a request to see its timeline.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Configuration readiness -->
+    <section class="config-panel" aria-labelledby="config-title">
+        <div class="system-info-header">
+            <h3 id="config-title"><i class="fas fa-sliders"></i> <span data-i18n="dashboard.configTitle">Configuration readiness</span></h3>
+            <span id="config-state" class="slo-state slo-state--unknown" role="status" aria-live="polite"></span>
+        </div>
+        <p class="debug-metrics-privacy" data-i18n="dashboard.configPrivacy">Effective runtime configuration. Secrets are never rendered.</p>
+        <div class="config-columns">
+            <div class="config-column">
+                <h4 data-i18n="dashboard.configEffective">Effective configuration</h4>
+                <table class="slo-table">
+                    <caption class="sr-only" data-i18n="dashboard.configEffective">Effective configuration</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col" data-i18n="dashboard.configField">Setting</th>
+                            <th scope="col" data-i18n="dashboard.configValue">Value</th>
+                            <th scope="col" data-i18n="dashboard.configSource">Source</th>
+                            <th scope="col" data-i18n="dashboard.configRestart">Restart</th>
+                        </tr>
+                    </thead>
+                    <tbody id="config-rows">
+                        <tr><td colspan="4" class="text-muted" data-i18n="dashboard.configNoData">No data</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="config-column">
+                <h4 data-i18n="dashboard.configFeatures">Features</h4>
+                <dl class="slo-metrics" id="config-features"></dl>
+                <h4 data-i18n="dashboard.configSecrets">Credentials</h4>
+                <dl class="slo-metrics" id="config-secrets"></dl>
+                <h4 data-i18n="dashboard.configValidation">Validation</h4>
+                <ul class="explorer-markers" id="config-issues"></ul>
             </div>
         </div>
     </section>
