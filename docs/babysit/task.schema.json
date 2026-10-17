@@ -71,8 +71,10 @@
       "required": ["success_criteria", "timeout_seconds"],
       "properties": {
         "success_criteria": {
-          "type": "array",
-          "items": { "type": "string" },
+          "oneOf": [
+            { "type": "array", "items": { "type": "string" } },
+            { "type": "string" }
+          ],
           "description": "Checkable criteria to determine if the task passed"
         },
         "max_turns": {
