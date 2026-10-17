@@ -56,3 +56,4 @@ scratch/
 
 # Local evaluation runs and tuning state
 evals/state.json
+runs/
