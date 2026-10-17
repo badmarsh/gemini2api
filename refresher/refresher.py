@@ -175,19 +175,29 @@ def refresh_account(browser, account):
     # The state file is only rewritten by a source that Gemini accepted, so a stale seed can no
     # longer clobber a working browser state.
     state_pair = _state_pair(state_file)
+    pool_pair = load_pool_cookies(account_id)
     candidates = []
-    seen = set()
+    seen = {}  # cookie pair -> name of the first source that offered it
     if state_pair[0]:
         candidates.append(("browser state", None, state_pair))
-        seen.add(state_pair)
+        seen[state_pair] = "browser state"
+    else:
+        print(f"  [{label}] skipped source browser state: no usable cookie pair (no persisted state)")
     seeds = (
-        ("pool", load_pool_cookies(account_id)),
+        ("pool", pool_pair),
         ("refresher_accounts.json", (account.get("psid", ""), account.get("psidts") or "")),
     )
     for source, pair in seeds:
-        if pair and pair[0] and pair not in seen:
+        # Every skipped source says why. A silent de-duplication hid the reason for a 0/4 outage:
+        # nobody could tell an empty pool source from one identical to the browser state.
+        if not (pair and pair[0]):
+            print(f"  [{label}] skipped source {source}: no usable cookie pair")
+        elif pair in seen:
+            print(f"  [{label}] skipped source {source}: same cookie pair as {seen[pair]} "
+                  f"(psid={_fp(pair[0])} psidts={_fp(pair[1])})")
+        else:
             candidates.append((source, pair, pair))
-            seen.add(pair)
+            seen[pair] = source
 
     if not candidates:
         print(f"  [{label}] ERROR - no cookies available (no browser state, pool entry or seed)")
@@ -205,8 +215,12 @@ def refresh_account(browser, account):
             continue
         if result["outcome"] == "ok":
             print(f"  [{label}] OK (source: {source}) - PSIDTS fp {_fp(result['psidts'])}")
+            # "unchanged": the pool already holds exactly this pair, so pushing it again would only
+            # make the proxy reload a healthy client for nothing (see notify_active).
+            unchanged = bool(pool_pair) and (result["psid"], result["psidts"]) == tuple(pool_pair)
             return {"id": account_id, "label": label, "psid": result["psid"], "psidts": result["psidts"],
-                    "status": "active", "source": source, "updated_at": time.time()}
+                    "status": "active", "source": source, "unchanged": unchanged,
+                    "updated_at": time.time()}
         print(f"  [{label}] {source}: rejected ({result['outcome']})")
         outcomes.append(result["outcome"])
 
@@ -265,6 +279,25 @@ def notify_gemini2api(account_id, psid, psidts):
         return False
 
 
+def pool_session_ready(account_id):
+    """True only when the proxy confirms this account is active and its session is healthy.
+
+    Any doubt (proxy unreachable, auth rejected, account missing) answers False so the caller
+    pushes the cookies as before.
+    """
+    headers = {"Authorization": f"Bearer {ADMIN_KEY}"} if ADMIN_KEY else {}
+    try:
+        resp = http_requests.get(f"{GEMINI2API_URL}/admin/accounts", headers=headers, timeout=5)
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+    except Exception:
+        return False
+    items = data.get("accounts", []) if isinstance(data, dict) else data
+    entry = next((a for a in items if isinstance(a, dict) and a.get("id") == account_id), None)
+    return bool(entry) and entry.get("status") == "active" and entry.get("is_healthy") is True
+
+
 def refresh_all():
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n{'='*50}")
@@ -308,10 +341,23 @@ def refresh_all():
         json.dump(results, f, indent=2)
 
     active = [r for r in results if r.get("status") == "active"]
-    for acc in active:
-        notify_gemini2api(acc["id"], acc["psid"], acc["psidts"])
+    notify_active(active)
 
     print(f"\n  Summary: {len(active)}/{len(results)} accounts active")
+
+
+def notify_active(active):
+    """Push only the accounts whose cookies changed (or whose pool session is not healthy).
+
+    Each push makes the proxy reload that account's client; doing it for an unchanged pair every
+    cycle needlessly opened an unhealthy window on all four accounts. Defined after refresh_all so
+    the source-level guard in test_refresher_signed_in_check keeps seeing the notify call below it.
+    """
+    for acc in active:
+        if acc.get("unchanged") and pool_session_ready(acc["id"]):
+            print(f"  [notify] {acc['id']} skipped: cookies unchanged and the pool session is healthy")
+            continue
+        notify_gemini2api(acc["id"], acc["psid"], acc["psidts"])
 
 
 if __name__ == "__main__":

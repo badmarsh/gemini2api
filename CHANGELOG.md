@@ -7,6 +7,12 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Fixed
+- **The refresher pushes only cookies that changed, and logs why a cookie source was skipped.** A result is
+  marked `unchanged` when it equals the pair the pool already holds; such an account is not pushed while
+  `/admin/accounts` reports it active and healthy (any doubt still pushes). Every skipped source
+  (`browser state`, `pool`, `refresher_accounts.json`) now logs its reason - no usable pair, or the same pair as
+  an earlier source (fingerprints only, never values). A silent de-duplication hid the cause of a 61 minute
+  0/4 outage. The refresher image must be rebuilt to pick this up.
 - **A cookie reload no longer kills non-stream chats that are already in flight.** The stream path leased
   the shared HTTP session, but the non-stream `_send_request` posted through `self._http` directly, so
   `reload_cookies()` (and a TLS fingerprint rotation) closed the session under the request. Observed live: every
