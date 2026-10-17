@@ -729,6 +729,25 @@ class GeminiWebClient:
     def check_history(self) -> list[dict]:
         return list(self._check_history)
 
+    def current_cookie_pair(self) -> tuple[str, str]:
+        """(PSID, PSIDTS) this client sends on its next request.
+
+        The persistent cookie jar follows Google's Set-Cookie rotation, so its PSIDTS wins when it
+        belongs to the same PSID. The admin cookie push compares against this pair to tell a real
+        rotation from a re-push of cookies the client already uses.
+        """
+        psid = self._psid or ""
+        psidts = self._psidts or ""
+        jar = self._cookie_jar
+        if jar is not None:
+            try:
+                stored = jar.get_all()
+            except Exception:
+                stored = {}
+            if stored.get("__Secure-1PSID") == psid and stored.get("__Secure-1PSIDTS"):
+                psidts = stored["__Secure-1PSIDTS"]
+        return psid, psidts
+
     def _lease_http(self):
         """Pin the current shared session for one in-flight request."""
         session = self._http

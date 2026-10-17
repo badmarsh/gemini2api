@@ -7,6 +7,12 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Fixed
+- **A cookie push no longer destabilises live chats.** `PUT /admin/accounts/{id}/cookies` now (1) answers
+  `{"status":"ok","changed":false}` without reloading when the client is healthy and already uses exactly the
+  pushed pair (the refresher re-pushed all four accounts every cycle even when nothing rotated), and (2) runs a
+  real reload under the client's `_heal_lock`, so a request arriving while the client is marked unhealthy waits
+  for the reload instead of starting a second concurrent one. Observed live: a chat returned 502 a few
+  milliseconds after each push finished. Adds `GeminiWebClient.current_cookie_pair()`.
 - **Gemini wire-frame decoders now use `json.loads(..., strict=False)`.** Literal newlines/tabs in a valid upstream string no longer get dropped by the internal frame, model-list and response decoders; this is hardening only and does not repair malformed tool calls.
 - **Tool-loop regenerations share one per-turn budget.** The promise/stall guard and malformed-JSON retry now consume the same single token, so one logical turn cannot stack both expensive Argon regenerations. Complete tool-call argument strings with an unescaped quote are repaired only after a strict JSON parse succeeds; missing closing structure is never synthesized. Parser diagnostics include the decoder reason, response length and truncation suspicion.
 - **Multi-turn context is no longer lost on stored conversations.** The 81-element StreamGenerate payload

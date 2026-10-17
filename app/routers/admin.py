@@ -4,6 +4,7 @@ import os
 import platform
 import sys
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
@@ -353,13 +354,65 @@ class UpdateCookiesRequest(BaseModel):
     persist: bool = True
 
 
+def _normalize_cookie(value: str) -> str:
+    """Same normalisation GeminiWebClient.reload_cookies applies before it stores a value."""
+    return (value or "").strip().strip('"').strip("'").rstrip(";")
+
+
+@asynccontextmanager
+async def _serialized_with_self_heal(client):
+    """Hold the client's heal lock for the duration of a cookie reload.
+
+    generate()/generate_stream() and the account pool already reload an unhealthy client under
+    ``_heal_lock``. A push that reloads without it overlaps that self-heal: reload_cookies marks the
+    client unhealthy while it re-fetches the session token, a request arriving in that window starts
+    its own second reload, and the two trample each other's HTTP session and token (live symptom: a
+    chat 502 a few milliseconds after the PUT finished). Taking the same lock makes the request wait
+    for the push instead.
+    """
+    lock = getattr(client, "_heal_lock", None)
+    if lock is None:
+        yield
+        return
+    async with lock:
+        yield
+
+
+def _push_is_noop(client, req: "UpdateCookiesRequest") -> bool:
+    """True when the client is healthy and already uses exactly the pair being pushed.
+
+    The refresher re-pushes every account each cycle, whether or not Google rotated anything.
+    A reload for an unchanged pair would only open an unhealthy window (and a Google round-trip)
+    for nothing, so it is skipped. An unhealthy client is always reloaded.
+    """
+    if getattr(client, "is_healthy", None) is not True:
+        return False
+    current = getattr(client, "current_cookie_pair", None)
+    if current is None:
+        return False
+    try:
+        pair = current()
+    except Exception:
+        return False
+    return pair == (_normalize_cookie(req.psid), _normalize_cookie(req.psidts))
+
+
 @router.put("/accounts/{account_id}/cookies")
 async def update_account_cookies(account_id: str, req: UpdateCookiesRequest):
     for account in account_pool.accounts:
         if account.id == account_id:
             if account.client is None:
                 account.client = GeminiWebClient(psid=req.psid, psidts=req.psidts)
-            result = await account.client.reload_cookies(psid=req.psid, psidts=req.psidts)
+            client = account.client
+            async with _serialized_with_self_heal(client):
+                if _push_is_noop(client, req):
+                    logger.info("Cookie push for %s skipped: the client already uses this pair", account_id)
+                    return {
+                        "status": "ok",
+                        "message": f"Account {account_id} cookies unchanged (no reload needed)",
+                        "changed": False,
+                    }
+                result = await client.reload_cookies(psid=req.psid, psidts=req.psidts)
             if result.get("success"):
                 account.status = AccountStatus.ACTIVE
                 account.psid = req.psid
