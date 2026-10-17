@@ -45,6 +45,64 @@ jobs:
       - name: Run tests (pytest)
         run: pytest
 
+  evals:
+    name: Eval Suite (offline)
+    runs-on: ubuntu-latest
+    # The eval suite lives outside `testpaths` (pytest only collects `tests/`),
+    # so it needs its own gate. It is fully offline: no upstream, no credentials.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run eval suite (pytest evals)
+        run: pytest evals -q -p no:cacheprovider
+
+  test-python-3-14:
+    name: Test (Python 3.14, advisory)
+    runs-on: ubuntu-latest
+    # Python 3.14 could not be executed in the authoring sandbox (no `py`
+    # launcher), so this job is advisory until a first green run is observed.
+    # Promote it to a hard gate once the dependency set is proven on 3.14.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Run tests (pytest)
+        run: pytest
+
   dependency-audit:
     name: Dependency Audit (report-only)
     runs-on: ubuntu-latest
