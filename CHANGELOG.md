@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file. The format 
   model, or an exhausted fallback, "Sorry, something went wrong..." came back as HTTP 200 / `response.completed`
   and a client had no signal to retry. It now answers like chat/completions: a classified error status (with
   `Retry-After` when known) non-stream, `response.failed` on the stream. Audit item K.
+- **`evals/state.json` is no longer tracked.** `.gitignore` already declared it local tuning state but the file
+  was committed, so the rule was inert and every `evals/tune.py --resume` run dirtied the diff. Decision: keep the
+  ignore rule and stop tracking the mutable resume state (`git rm --cached`); the dated `evals/reports/*` files
+  stay tracked as the reproducible evidence. Audit item J.
 - **Request diagnostics no longer report every non-Argon request as `served_by="argon"`.** `_debug_fallback`
   defaulted to `argon` whenever the Argon-only served-by header was absent, so a plain `gemini-flash` chat was
   recorded as served by Argon - which defeated the requested-vs-served comparison that exposes a silent Flash
