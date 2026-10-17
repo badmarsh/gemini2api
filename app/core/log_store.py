@@ -39,6 +39,10 @@ class LogRecord:
     parser_response_length: Optional[int] = None
     parser_repaired: bool = False
     truncated_suspected: bool = False
+    # Wall-clock time the request entered the proxy. ``ts`` is the time the record
+    # was written (after the response), so the two together describe the request
+    # window. Both are ISO-8601 UTC timestamps.
+    ingress_ts: Optional[str] = None
     request: Optional[dict] = None
     response: Optional[dict] = None
 
@@ -206,6 +210,7 @@ def create_log_record(
     parser_response_length: Optional[int] = None,
     parser_repaired: bool = False,
     truncated_suspected: bool = False,
+    ingress_ts: Optional[str] = None,
 ) -> LogRecord:
     now = datetime.now(timezone.utc).isoformat()
     return LogRecord(
@@ -235,6 +240,7 @@ def create_log_record(
         parser_response_length=int(parser_response_length) if parser_response_length is not None else None,
         parser_repaired=bool(parser_repaired),
         truncated_suspected=bool(truncated_suspected),
+        ingress_ts=ingress_ts,
         request=request_body,
         response=response_body,
     )

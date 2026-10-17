@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Depends, Response
@@ -22,6 +23,7 @@ from app.core.usage_timer import snapshot_loop
 from app.core.log_store import LogStore, create_log_record
 from app.core.debug_metrics import metrics as debug_metrics
 from app.core.request_context import bind as bind_request_context, reset as reset_request_context
+from app.core.security_headers import apply_security_headers
 from app.routers import openai, claude, gemini, research
 from app.routers import responses as responses_router
 from app.routers import admin
@@ -426,6 +428,12 @@ def _add_debug_log(request: Request, response, *, path: str, method: str, model:
                    max_gap_ms: float, raw: bytes = b"", request_body=None, response_body=None) -> None:
     import time as _time
     total_ms = max(0.0, (_time.perf_counter() - started) * 1000)
+    # Wall-clock time the request entered the proxy. The record's own ``ts`` is the
+    # time the record was written (after the response), so both together describe
+    # the request window for the dashboard's request explorer.
+    ingress_ts = datetime.fromtimestamp(
+        _time.time() - total_ms / 1000.0, tz=timezone.utc
+    ).isoformat()
     fallback_used, fallback_reason, served_by = _debug_fallback(response, raw)
     error_class = _debug_error_class(request, status, raw)
     account_hash = getattr(request.state, "account_hash", "") or ""
@@ -466,14 +474,18 @@ def _add_debug_log(request: Request, response, *, path: str, method: str, model:
         parser_response_length=parser_response_length,
         parser_repaired=parser_repaired,
         truncated_suspected=truncated_suspected,
+        ingress_ts=ingress_ts,
     )
     debug = {
         "request_id": record.request_id,
         "ts": record.ts,
+        "ingress_ts": ingress_ts,
         "model": model or "",
         "served_by": served_by,
         "account_hash": account_hash,
         "status": status,
+        "stream": bool(stream),
+        "path": _scrub_sensitive(path),
         "ttft_ms": ttft_ms,
         "total_latency_ms": total_ms,
         "max_inter_chunk_gap_ms": max_gap_ms,
@@ -489,6 +501,18 @@ def _add_debug_log(request: Request, response, *, path: str, method: str, model:
     }
     debug_metrics.record(debug)
     request.app.state.log_store.add(record)
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Attach the response hardening headers (CSP, nosniff, frame options, ...).
+
+    Applied to every response -- the console pages and the API alike. The headers are
+    additive: no client contract changes and no status code changes.
+    """
+    response = await call_next(request)
+    apply_security_headers(response)
+    return response
 
 
 @app.middleware("http")
