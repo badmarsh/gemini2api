@@ -10,7 +10,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import settings
 from app.core.account_pool import account_pool as gemini_client
-from app.core.gemini_client import GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES
+from app.core.gemini_client import (
+    GEMINI_MODELS, _resolve_model, GOOGLE_WEB_ERROR_PHRASES, MODEL_ALIASES, classify_error,
+)
 from app.core.fallback import is_empty_result, is_blank_answer, EMPTY_RESPONSE_MESSAGE
 from app.core import agent_loop, argon_fallback
 from app.core.regeneration_budget import RegenerationBudget
@@ -181,6 +183,14 @@ async def create_response(request: Request):
     # retryable error instead of an HTTP 200 with empty content.
     if is_blank_answer(result):
         return _error(502, EMPTY_RESPONSE_MESSAGE, error_type="api_error")
+    # Google's soft-error phrase ("Sorry, something went wrong...") is a failure, not an assistant reply. Fallback
+    # (above) already had its chance; report it the way chat/completions does so a client can retry.
+    if is_err_text:
+        status, err_type, retry_after = classify_error(RuntimeError(res_text))
+        resp = _error(status, res_text, error_type=err_type)
+        if retry_after:
+            resp.headers["Retry-After"] = str(retry_after)
+        return resp
     # AI 生成图片：沿用 chat/completions 的既有做法，Markdown 图片链接嵌入文字内容（design §4.3）
     gen_images = result.get("images") or []
     if gen_images:
@@ -274,6 +284,9 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
         is_err_text = bool(res_text and any(res_text.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES))
         if is_blank_answer(result):
             yield enc.failed(EMPTY_RESPONSE_MESSAGE)
+            return
+        if is_err_text:
+            yield enc.failed(res_text)
             return
         thoughts = result.get("thoughts") or ""
         gen_images = result.get("images") or []
@@ -437,6 +450,13 @@ async def _stream_gemini_response(request, prompt, model, has_tools, attachments
 
     if not streamed_any and not (full_text or "").strip() and not final_images and not thoughts:
         yield enc.failed(EMPTY_RESPONSE_MESSAGE)
+        return
+
+    # Deltas may already have gone out (a phrase cannot be recognised before it is complete), but the stream must
+    # still end in `response.failed`, not `response.completed`: Google's soft-error text is not an answer.
+    _final_stripped = (full_text or "").strip()
+    if _final_stripped and any(_final_stripped.startswith(err) for err in GOOGLE_WEB_ERROR_PHRASES):
+        yield enc.failed(_final_stripped)
         return
 
     if final_images:
