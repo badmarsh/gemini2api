@@ -5,6 +5,7 @@ Periodically visits the Gemini web page using a headless Chromium browser,
 triggering Google's client-side JS to automatically refresh __Secure-1PSIDTS,
 then writes updated cookies to the shared data file and notifies gemini2api.
 """
+import hashlib
 import os
 import sys
 import json
@@ -49,31 +50,116 @@ def ensure_state_dir(account_id):
     return path
 
 
-def _state_psid(state_file):
-    """Read current __Secure-1PSID in state.json to determine if credentials have rotated."""
+def _fp(value):
+    """Short non-reversible fingerprint for logs. Cookie values are never logged."""
+    if not value:
+        return "none"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+
+
+def _state_pair(state_file):
+    """(PSID, PSIDTS) currently stored in the persisted browser state; ("", "") when absent."""
     try:
         with open(state_file, "r", encoding="utf-8") as f:
             state = json.load(f)
-        for c in state.get("cookies", []):
-            if c.get("name") == "__Secure-1PSID":
-                return c.get("value")
     except Exception:
+        return ("", "")
+    found = {c.get("name"): c.get("value") for c in state.get("cookies", []) if isinstance(c, dict)}
+    return (found.get("__Secure-1PSID") or "", found.get("__Secure-1PSIDTS") or "")
+
+
+def load_pool_cookies(account_id):
+    """The cookie pair the gemini2api pool holds for this account right now, or None.
+
+    refresher_accounts.json is a one-off seed: the pool rotates PSIDTS (and sometimes the PSID
+    itself) on its own, so the seed goes stale and Google then serves the signed-out page for it.
+    data/accounts.json is the pool's own store on the shared ./data volume, so it tracks that
+    rotation. The pool's cookie jar is written on every Set-Cookie and can hold a newer PSIDTS
+    than accounts.json, so it wins when it belongs to the same PSID.
+    """
+    try:
+        with open(os.path.join(DATA_DIR, "accounts.json"), "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
         return None
-    return None
+    items = data.get("accounts", []) if isinstance(data, dict) else data
+    entry = next((a for a in items if isinstance(a, dict) and a.get("id") == account_id), None)
+    if not entry or not entry.get("psid"):
+        return None
+    psid, psidts = entry["psid"], entry.get("psidts") or ""
+    jar_name = hashlib.sha256(psid.encode("utf-8")).hexdigest()[:16] + ".json"
+    try:
+        with open(os.path.join(DATA_DIR, "cookies", jar_name), "r", encoding="utf-8") as f:
+            stored = {c.get("name"): c.get("value") for c in json.load(f) if isinstance(c, dict)}
+        if stored.get("__Secure-1PSID") == psid and stored.get("__Secure-1PSIDTS"):
+            psidts = stored["__Secure-1PSIDTS"]
+    except (OSError, ValueError, TypeError):
+        pass
+    return (psid, psidts)
 
 
-def inject_cookies_to_state(state_dir, psid, psidts):
-    state_file = os.path.join(state_dir, "state.json")
-    cookies = [
-        {"name": "__Secure-1PSID", "value": psid, "domain": ".google.com", "path": "/", "secure": True, "httpOnly": True, "sameSite": "None"},
-    ]
-    # Only write psidts when non-empty to avoid polluting browser state.
+def _cookie_list(psid, psidts):
+    base = {"domain": ".google.com", "path": "/", "secure": True, "httpOnly": True, "sameSite": "None"}
+    cookies = [dict(name="__Secure-1PSID", value=psid, **base)]
+    # Only add PSIDTS when non-empty to avoid polluting browser state.
     if psidts:
-        cookies.append({"name": "__Secure-1PSIDTS", "value": psidts, "domain": ".google.com", "path": "/", "secure": True, "httpOnly": True, "sameSite": "None"})
-    state = {"cookies": cookies, "origins": []}
-    with open(state_file, "w", encoding="utf-8") as f:
-        json.dump(state, f)
-    print(f"  [init] Injected cookies from config into state")
+        cookies.append(dict(name="__Secure-1PSIDTS", value=psidts, **base))
+    return cookies
+
+
+PAGE_SETTLE_SECONDS = 15   # let Google's page JS run so it can rotate __Secure-1PSIDTS
+SIGNED_IN_DETECT_SECONDS = 10
+
+
+def _attempt(browser, state_file, seed=None):
+    """Open one browser session and report whether Gemini accepted its cookies.
+
+    seed=None reuses the persisted browser state; otherwise seed is a (psid, psidts) pair injected
+    into a fresh context. Returns {"outcome": "ok" | "login" | "signed_out" | "no_cookie", ...};
+    only "ok" carries psid/psidts, and only "ok" rewrites state_file.
+    """
+    options = {"locale": "en-US", "timezone_id": "America/New_York"}
+    if seed is None:
+        options["storage_state"] = state_file
+    context = browser.new_context(**options)
+    try:
+        if seed is not None:
+            context.add_cookies(_cookie_list(*seed))
+        page = context.new_page()
+        started = time.time()
+        page.goto("https://gemini.google.com/app", timeout=90000, wait_until="domcontentloaded")
+
+        # Gemini serves a signed-OUT landing page at /app (no redirect to the login page), so a
+        # URL check alone reports success for cookies Google did not accept. A signed-in page
+        # carries the SNlM0e token (the same marker gemini2api itself mints its session from);
+        # the guest page does not. Poll instead of sleeping blind: a valid page has it at once.
+        signed_in = False
+        deadline = time.time() + SIGNED_IN_DETECT_SECONDS
+        while True:
+            if "accounts.google.com" in page.url or "ServiceLogin" in page.url:
+                return {"outcome": "login"}
+            try:
+                if '"SNlM0e"' in page.content():
+                    signed_in = True
+                    break
+            except Exception:
+                pass  # page is mid-navigation; look again
+            if time.time() >= deadline:
+                break
+            time.sleep(1)
+        if not signed_in:
+            return {"outcome": "signed_out"}
+
+        time.sleep(max(0.0, PAGE_SETTLE_SECONDS - (time.time() - started)))
+        cookies = context.cookies()
+        psid = next((c["value"] for c in cookies if c["name"] == "__Secure-1PSID"), None)
+        psidts = next((c["value"] for c in cookies if c["name"] == "__Secure-1PSIDTS"), None)
+        if psid and psidts:
+            context.storage_state(path=state_file)
+            return {"outcome": "ok", "psid": psid, "psidts": psidts}
+        return {"outcome": "no_cookie"}
+    finally:
+        context.close()
 
 
 def refresh_account(browser, account):
@@ -82,51 +168,56 @@ def refresh_account(browser, account):
     state_dir = ensure_state_dir(account_id)
     state_file = os.path.join(state_dir, "state.json")
 
-    # Inject on first run or when PSID has changed in refresher_accounts.json.
-    if not os.path.exists(state_file) or _state_psid(state_file) != account["psid"]:
-        inject_cookies_to_state(state_dir, account["psid"], account.get("psidts", ""))
-
-    print(f"  [{label}] Opening browser context...")
-    context = browser.new_context(
-        storage_state=state_file,
-        locale="en-US",
-        timezone_id="America/New_York",
+    # Cookie sources, best first, de-duplicated by cookie pair:
+    #   1. the persisted browser state (keeps Google's companion cookies),
+    #   2. the pair the gemini2api pool holds now (source of truth, it rotates PSID/PSIDTS itself),
+    #   3. the one-off seed in refresher_accounts.json (stale once anything has rotated).
+    # The state file is only rewritten by a source that Gemini accepted, so a stale seed can no
+    # longer clobber a working browser state.
+    state_pair = _state_pair(state_file)
+    candidates = []
+    seen = set()
+    if state_pair[0]:
+        candidates.append(("browser state", None, state_pair))
+        seen.add(state_pair)
+    seeds = (
+        ("pool", load_pool_cookies(account_id)),
+        ("refresher_accounts.json", (account.get("psid", ""), account.get("psidts") or "")),
     )
-    page = context.new_page()
+    for source, pair in seeds:
+        if pair and pair[0] and pair not in seen:
+            candidates.append((source, pair, pair))
+            seen.add(pair)
 
-    try:
-        page.goto("https://gemini.google.com/app", timeout=90000, wait_until="domcontentloaded")
-        time.sleep(15)
+    if not candidates:
+        print(f"  [{label}] ERROR - no cookies available (no browser state, pool entry or seed)")
+        return {"id": account_id, "label": label, "status": "error", "error": "no cookies available", "updated_at": time.time()}
 
-        if "accounts.google.com" in page.url or "ServiceLogin" in page.url:
-            print(f"  [{label}] FAILED - Session expired, redirected to login ({page.url[:60]})")
-            return {"id": account_id, "label": label, "status": "expired", "updated_at": time.time()}
+    outcomes = []
+    errors = []
+    for source, seed, pair in candidates:
+        print(f"  [{label}] Opening browser context (source: {source}, psid={_fp(pair[0])} psidts={_fp(pair[1])})...")
+        try:
+            result = _attempt(browser, state_file, seed)
+        except Exception as e:
+            print(f"  [{label}] {source}: ERROR - {e}")
+            errors.append(str(e))
+            continue
+        if result["outcome"] == "ok":
+            print(f"  [{label}] OK (source: {source}) - PSIDTS fp {_fp(result['psidts'])}")
+            return {"id": account_id, "label": label, "psid": result["psid"], "psidts": result["psidts"],
+                    "status": "active", "source": source, "updated_at": time.time()}
+        print(f"  [{label}] {source}: rejected ({result['outcome']})")
+        outcomes.append(result["outcome"])
 
-        # Gemini serves a signed-OUT landing page at /app (no redirect to the login page), so a
-        # URL check alone reports success for cookies Google did not accept - the injected cookies
-        # then simply read back unchanged. A signed-in page carries the SNlM0e token (the same
-        # marker gemini2api itself mints its session from); the guest page does not.
-        if '"SNlM0e"' not in page.content():
-            print(f"  [{label}] NOT SIGNED IN - Gemini served the signed-out page ({page.url[:60]}); "
-                  "the browser did not accept the injected cookies. Not pushing them to gemini2api.")
-            return {"id": account_id, "label": label, "status": "signed_out", "updated_at": time.time()}
-
-        cookies = context.cookies()
-        psid = next((c["value"] for c in cookies if c["name"] == "__Secure-1PSID"), None)
-        psidts = next((c["value"] for c in cookies if c["name"] == "__Secure-1PSIDTS"), None)
-
-        if psid and psidts:
-            context.storage_state(path=state_file)
-            print(f"  [{label}] OK - PSIDTS: {psidts[:20]}...")
-            return {"id": account_id, "label": label, "psid": psid, "psidts": psidts, "status": "active", "updated_at": time.time()}
-        else:
-            print(f"  [{label}] FAILED - Cookie not found, may need re-login")
-            return {"id": account_id, "label": label, "status": "expired", "updated_at": time.time()}
-    except Exception as e:
-        print(f"  [{label}] ERROR - {e}")
-        return {"id": account_id, "label": label, "status": "error", "error": str(e), "updated_at": time.time()}
-    finally:
-        context.close()
+    if "login" in outcomes or "no_cookie" in outcomes:
+        print(f"  [{label}] FAILED - Session expired, redirected to login or cookie missing")
+        return {"id": account_id, "label": label, "status": "expired", "updated_at": time.time()}
+    if outcomes:
+        print(f"  [{label}] NOT SIGNED IN - Gemini served the signed-out page for every cookie source "
+              f"tried ({', '.join(src for src, _, _ in candidates)}). Not pushing anything to gemini2api.")
+        return {"id": account_id, "label": label, "status": "signed_out", "updated_at": time.time()}
+    return {"id": account_id, "label": label, "status": "error", "error": "; ".join(errors), "updated_at": time.time()}
 
 
 def notify_gemini2api(account_id, psid, psidts):

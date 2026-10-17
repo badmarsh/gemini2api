@@ -2,6 +2,10 @@ FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
 
 WORKDIR /app
 
+# Unbuffered stdout/stderr: without a TTY Python block-buffers prints, so `docker logs` showed
+# nothing for hours and a refresh cycle could not be followed live.
+ENV PYTHONUNBUFFERED=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-wqy-zenhei curl procps \
     && rm -rf /var/lib/apt/lists/*
 

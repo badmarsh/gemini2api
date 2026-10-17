@@ -6,7 +6,9 @@ _SRC = (Path(__file__).resolve().parents[2] / "refresher" / "refresher.py").read
 
 
 def test_refresh_account_checks_for_the_signed_in_marker_before_reporting_success():
-    body = _SRC[_SRC.index("def refresh_account("):_SRC.index("def notify_gemini2api(")]
+    # The marker check lives in _attempt(); refresh_account() only reports "active" for an
+    # attempt that passed it, and "signed_out" when every cookie source was rejected.
+    body = _SRC[_SRC.index("def _attempt("):_SRC.index("def notify_gemini2api(")]
     marker = body.index('"SNlM0e"')
     success = body.index('"status": "active"')
     assert marker < success, "signed-in check must run before the success result"
