@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Fixed
+- **A cookie reload no longer kills non-stream chats that are already in flight.** The stream path leased
+  the shared HTTP session, but the non-stream `_send_request` posted through `self._http` directly, so
+  `reload_cookies()` (and a TLS fingerprint rotation) closed the session under the request. Observed live: every
+  chat in flight on the account being reloaded answered 502 within milliseconds of that account's PUT finishing.
+  The POST now holds a lease; the old session is closed by its last user.
 - **A cookie push no longer destabilises live chats.** `PUT /admin/accounts/{id}/cookies` now (1) answers
   `{"status":"ok","changed":false}` without reloading when the client is healthy and already uses exactly the
   pushed pair (the refresher re-pushed all four accounts every cycle even when nothing rotated), and (2) runs a

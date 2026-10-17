@@ -1779,11 +1779,18 @@ class GeminiWebClient:
         # _obtain_session_token, so the POST rides that same connection.
         # Mint once per account, never per request (per-request /app fetches
         # churn sessions and trip Google's RotateCookies HFCR limit).
-        resp = await self._http.post(
-            GENERATE_URL, params=self._stream_generate_params(),
-            data={"at": self._session_token, "f.req": encoded}, cookies=cookies,
-            headers=headers, timeout=gen_timeout,
-        )
+        # Lease the shared session for the whole POST (like generate_stream does): a cookie reload or
+        # TLS fingerprint rotation swaps self._http and must not close it under this request.
+        token = self._session_token
+        session = self._lease_http()
+        try:
+            resp = await session.post(
+                GENERATE_URL, params=self._stream_generate_params(),
+                data={"at": token, "f.req": encoded}, cookies=cookies,
+                headers=headers, timeout=gen_timeout,
+            )
+        finally:
+            await self._release_http(session)
         self._cookie_jar.update_from_response(resp)
 
         if resp.status_code >= 400:
