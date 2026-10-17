@@ -27,6 +27,32 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("collector")
 
 
+def resolve_api_key(cli_key: str | None = None) -> str:
+    """Resolve API key from CLI arg, environment variables, or local .env file."""
+    if cli_key and cli_key.strip():
+        return cli_key.strip()
+    key = os.environ.get("ADMIN_API_KEY") or os.environ.get("API_KEY")
+    if key and key.strip():
+        return key.strip()
+    candidates = [Path(".env"), Path(__file__).resolve().parents[2] / ".env"]
+    for p in candidates:
+        if p.is_file():
+            try:
+                for line in p.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line.startswith("ADMIN_API_KEY="):
+                        val = line.split("=", 1)[1].strip("\"' ")
+                        if val:
+                            return val
+                    if line.startswith("API_KEY="):
+                        val = line.split("=", 1)[1].strip("\"' ")
+                        if val:
+                            return val
+            except Exception:
+                pass
+    return ""
+
+
 class BabysitCollector:
     def __init__(
         self,
@@ -38,7 +64,7 @@ class BabysitCollector:
         consecutive_5xx_limit: int = 5,
     ):
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key or os.environ.get("ADMIN_API_KEY") or os.environ.get("API_KEY") or ""
+        self.api_key = resolve_api_key(api_key)
         self.run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         self.run_dir = Path(runs_dir) / self.run_id
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -84,6 +110,15 @@ class BabysitCollector:
     def check_pool_health(self) -> Dict[str, Any]:
         """Query /admin/status and verify active accounts."""
         status = self._http_get("/admin/status")
+        if status.get("error"):
+            return {
+                "healthy": False,
+                "error": status.get("error"),
+                "message": status.get("message"),
+                "active": 0,
+                "total": 0,
+                "raw": status,
+            }
         active = status.get("active", 0)
         total = status.get("total", 0)
         return {
@@ -156,6 +191,9 @@ class BabysitCollector:
         # 2. Pool health check
         pool_status = self.check_pool_health()
         if not pool_status["healthy"]:
+            if pool_status.get("error") == 401:
+                logger.error("HTTP 401 Unauthorized: API key invalid or missing! Set $env:API_KEY, pass --api-key, or ensure API_KEY is in .env.")
+                return {"abort": True, "reason": "unauthorized"}
             logger.error("Pool has 0 active accounts! Auto-stop triggered.")
             return {"abort": True, "reason": "pool_depleted"}
 

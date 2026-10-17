@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 # Add docs/babysit to sys.path so we can import sandbox
 _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
-from sandbox import BabysitSandbox
+from sandbox import AgentSandbox as BabysitSandbox
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("runner")
@@ -54,6 +54,32 @@ def extract_json(s: str) -> Any:
         raise
 
 
+def resolve_api_key(cli_key: Optional[str] = None) -> str:
+    """Resolve API key from CLI arg, environment variables, or local .env file."""
+    if cli_key and cli_key.strip():
+        return cli_key.strip()
+    key = os.environ.get("ADMIN_API_KEY") or os.environ.get("API_KEY")
+    if key and key.strip():
+        return key.strip()
+    candidates = [Path(".env"), Path(__file__).resolve().parents[2] / ".env"]
+    for p in candidates:
+        if p.is_file():
+            try:
+                for line in p.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line.startswith("ADMIN_API_KEY="):
+                        val = line.split("=", 1)[1].strip("\"' ")
+                        if val:
+                            return val
+                    if line.startswith("API_KEY="):
+                        val = line.split("=", 1)[1].strip("\"' ")
+                        if val:
+                            return val
+            except Exception:
+                pass
+    return ""
+
+
 class BabysitRunner:
     def __init__(
         self,
@@ -67,7 +93,7 @@ class BabysitRunner:
         monitor_model: str = "gemini-flash",
     ):
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key or os.environ.get("ADMIN_API_KEY") or os.environ.get("API_KEY") or ""
+        self.api_key = resolve_api_key(api_key)
         self.run_id = run_id or f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         self.run_dir = Path(runs_dir) / self.run_id
         self.run_dir.mkdir(parents=True, exist_ok=True)

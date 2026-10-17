@@ -100,3 +100,7 @@ class AgentSandbox:
             return {"status": "error", "message": f"Command timed out after {timeout} seconds"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
+
+BabysitSandbox = AgentSandbox
+
