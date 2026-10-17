@@ -44,7 +44,9 @@ export const APP_CONSTANTS = deepFreeze({
         LANGUAGE: 'gemini2api_language',
         PG_MODEL: 'gemini2api_pg_model',
         PG_THINKING: 'gemini2api_pg_thinking',
-        LOGS_PAUSED: 'gemini2api_logs_paused'
+        LOGS_PAUSED: 'gemini2api_logs_paused',
+        DASHBOARD_REFRESH_PAUSED: 'gemini2api_dashboard_refresh_paused',
+        EXPLORER_FILTER: 'gemini2api_explorer_filter'
     },
     ROUTES: {
         HEALTH: '/health',
@@ -59,6 +61,9 @@ export const APP_CONSTANTS = deepFreeze({
         ADMIN_LOG_RECORD: '/admin/logs',
         ADMIN_DEBUG_METRICS: '/admin/debug-metrics',
         ADMIN_TOOL_JSON_TEST: '/admin/debug/tool-json',
+        ADMIN_CONFIG: '/admin/config',
+        ADMIN_METRICS: '/admin/metrics',
+        ADMIN_ARGON_RESET: '/admin/argon/reset',
         ADMIN_SETTINGS: '/admin/settings',
         ADMIN_USAGE_SUMMARY: '/admin/usage-stats/summary',
         ADMIN_USAGE_HOURLY: '/admin/usage-stats/history',

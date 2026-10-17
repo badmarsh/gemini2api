@@ -44,6 +44,15 @@ All notable changes to this project will be documented in this file. The format 
 - `POST /admin/api-keys/models` now sends a Gemini key in the `x-goog-api-key` header instead of the `?key=` query string, and no longer echoes upstream exception text (which embedded the request URL) back to the client. Errors report only the HTTP status or the exception type.
 - Log scrubbing now masks the whole key token: `sk-ant-...` and `sk-proj-...` keys (letters, digits, `-`, `_`), URL-encoded `sk%2D...` keys, and `?key=` / `?api_key=` / `?apikey=` / `?api-key=` query values. Before, only the first segment of a dashed key was hidden and the tail leaked. The same scrubber backs the request log.
 - `PATCH /admin/api-keys/fallback` no longer returns the raw exception text (which could contain local file paths) when persisting fails; the details stay in the server log.
+- **Response hardening headers**: every response now carries a `Content-Security-Policy` (default-src/connect-src
+  restricted to the two CDNs the console actually uses), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy`, `Permissions-Policy` and `Cross-Origin-Opener-Policy`. External links in the console carry
+  `rel="noopener noreferrer"`.
+- **CSRF surface documented and pinned**: the web console authenticates with a bearer token in the `Authorization`
+  header and never uses cookies, so no ambient credential exists that a cross-site request could ride on. The
+  invariant is pinned by a regression test; no cookie-based session was introduced.
+- `POST /admin/accounts/{id}/status` (enable/disable an account) is protected by the admin key, never echoes the
+  account id back to the visible UI and never modifies the stored credentials.
 
 ### Changed
 - Argon timeouts and stalls no longer escape as a bare `500`: `curl_cffi` timeouts (an `OSError`) are classified as `504` (timeout) or `502` (other transport errors) and are caught by the OpenAI, Anthropic and native Gemini routers, so the Flash fallback actually runs.
@@ -85,6 +94,34 @@ All notable changes to this project will be documented in this file. The format 
 - Panel: new "Argon & agent loop" group (`ARGON_SYSTEM_PROMPT_MODE`, `ARGON_TIMEOUT`, `TOOL_LOOP_REMINDER`,
   `TOOL_LOOP_STALL_GUARD`) with labels and hints in all five languages.
 - Dashboard v2: the dashboard now loads `/admin/status` and `/admin/system-info` in parallel (`Promise.allSettled`). If only one of them fails, the other card group still renders and a small notice with a Retry button appears for the failed part; the full-section error screen is kept for the case where both fail. The dashboard also refreshes itself every 30 seconds, but only while it is the active section and the browser tab is visible (a background refresh never replaces the page with an error screen and skips the static QR cards). New i18n keys `dashboard.error.status`, `dashboard.error.system`, `dashboard.retry` in all five languages.
+- **Prometheus-compatible metrics endpoint** (`GET /admin/metrics`, admin key): request count, latency buckets, TTFT,
+  fallback, Argon breaker, account-pool, parser and regeneration counters in the standard text exposition format.
+  Label values are bounded (at most 12 distinct values per label, everything else collapses into `other`); there are
+  no request-id, account-hash, prompt or client-model labels. The existing redacted JSON diagnostics stay the source
+  for the web console.
+- **Operational overview (SLO panel)**: 1h/24h/7d request volume and error rate, TTFT p50/p95, the maximum
+  inter-chunk gap, the Argon breaker state, the fallback rate, regeneration-budget exhaustion and account-pool
+  saturation/slot-leak indicators. The state is explicitly `ok`, `degraded` or `unknown` (with the reasons listed),
+  so a missing signal is never rendered as "healthy".
+- **Request explorer** (`GET /admin/debug-metrics/{request_id}`): a correlated timeline per request with ingress and
+  egress timestamps, TTFT, total duration, inter-chunk gaps, requested vs. actual model, fallback reason, parser
+  failure class, regeneration count, stream markers and finish reason. Request and response bodies are never included
+  and the timeline contains no `Authorization` header, cookies, prompts or account IDs.
+- **Configuration readiness view** (`GET /admin/config`): the effective runtime configuration with the source of
+  every value (environment variable, persisted panel override or default), which settings only take effect after a
+  restart, validation failures and override drift. Secrets are reported as "configured" only, never as values.
+- **Account-pool operations view**: per account slots in use vs. capacity, remaining cooldown, failure/empty streaks,
+  session health and last success, plus confirmation-protected actions (check, enable/disable) and a
+  confirmation-protected Argon breaker reset. `POST /admin/accounts/{id}/status` disables an account at runtime
+  (the rotation skips it, the credentials and counters are kept) and is not persisted to `accounts.json`.
+- **Accessible dashboard UX**: keyboard navigation with visible focus, screen-reader labels for the charts and for
+  status changes, empty/loading/error states, `prefers-reduced-motion` support, a pause/resume button for the
+  auto-refresh (the state survives a reload) and a persisted request-explorer filter. All new UI strings exist in
+  all five languages (`zh-CN`, `en-US`, `ja-JP`, `ko-KR`, `zh-TW`).
+- **CI gates**: the offline eval suite (`pytest evals -q -p no:cacheprovider`, not collected by the default
+  pytest run) is now its own job, and a Python 3.14 job runs ruff + pytest. The 3.14 job installs
+  `pydantic>=2.12` because the pinned `pydantic==2.11.3` pulls a `pydantic-core` without a cp314 wheel;
+  `requirements.txt` itself is unchanged.
 
 ## [1.7.1] - 2026-10-14 (badmarsh/gemini2api v1.7.1)
 

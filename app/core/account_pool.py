@@ -705,6 +705,34 @@ class AccountPool:
                 return {"valid": False, "error": "No client", "account_id": account.id}
         raise ValueError(f"Account {account_id} not found")
 
+    def set_account_enabled(self, account_id: str, enabled: bool) -> dict:
+        """Enable or disable one account (runtime only).
+
+        A disabled account is skipped by the rotation (``_find_available`` only
+        picks ACTIVE accounts) but keeps its cookies and its health counters, so
+        enabling it again restores the previous state. The status is deliberately
+        **not** persisted: ``accounts.json`` only stores the credentials, and a
+        disabled account that silently came back after a restart would be a worse
+        surprise than one that has to be re-disabled.
+        """
+        for account in self._accounts:
+            if account.id != account_id:
+                continue
+            if enabled:
+                # Re-enabling only clears the manual disable; an account that was
+                # marked EXPIRED by failed checks stays expired until a check
+                # succeeds.
+                if account.status == AccountStatus.DISABLED:
+                    account.status = AccountStatus.ACTIVE
+            else:
+                account.status = AccountStatus.DISABLED
+            return {
+                "account_id": account.id,
+                "status": account.status.value,
+                "enabled": account.status != AccountStatus.DISABLED,
+            }
+        raise ValueError(f"Account {account_id} not found")
+
     async def check_all(self) -> list[dict]:
         results = []
         for account in self._accounts:
@@ -812,6 +840,8 @@ class AccountPool:
                 "active_requests": a.active_requests,
                 "last_used": a.last_used.isoformat() if a.last_used else None,
                 "cooling_down": a.cooldown_until > loop_now,
+                # 冷却还剩多久：面板要能回答"这个账号什么时候能再试"，而不只是"在冷却中"。
+                "cooldown_remaining_s": round(max(0.0, a.cooldown_until - loop_now), 1),
                 # issue #11：下面这几个才是有鉴别力的健康信号。status 只有连挂 3 次或撞 401/403
                 # 才会变 EXPIRED，所以"cookie 已经死透但面板一直绿着 ACTIVE"是常态；
                 # models_count 只要 client 对象在就恒等于公开模型数，同样证明不了会话还活着。
@@ -832,6 +862,42 @@ class AccountPool:
             "strategy": self._strategy.value,
             "max_concurrent_per_account": self._max_concurrent,
             "accounts": accounts_info,
+        }
+
+    def health_summary(self) -> dict:
+        """Pool-level operational indicators for the dashboard and the metrics exporter.
+
+        Contains no account identifiers, no cookies and no prompts -- only counts and
+        ratios. ``slot_leak_accounts`` is the leak indicator: an account holding more
+        slots than the configured per-account limit means a request took a slot and
+        never gave it back.
+        """
+        try:
+            loop_now = asyncio.get_running_loop().time()
+        except RuntimeError:
+            loop_now = 0.0
+        accounts = list(self._accounts)
+        capacity = len(accounts) * self._max_concurrent
+        active = sum(a.active_requests for a in accounts)
+        cooling = [a for a in accounts if a.cooldown_until > loop_now]
+        overcommitted = [a for a in accounts if a.active_requests > self._max_concurrent]
+        by_status: dict[str, int] = {}
+        for account in accounts:
+            by_status[account.status.value] = by_status.get(account.status.value, 0) + 1
+        return {
+            "accounts": len(accounts),
+            "accounts_active": by_status.get(AccountStatus.ACTIVE.value, 0),
+            "accounts_expired": by_status.get(AccountStatus.EXPIRED.value, 0),
+            "accounts_disabled": by_status.get(AccountStatus.DISABLED.value, 0),
+            "accounts_refreshing": by_status.get(AccountStatus.REFRESHING.value, 0),
+            "max_concurrent_per_account": self._max_concurrent,
+            "capacity": capacity,
+            "active_requests": active,
+            "saturation": round(active / capacity, 4) if capacity else 0.0,
+            "saturated": bool(capacity and active >= capacity),
+            "cooling_accounts": len(cooling),
+            "cooldown_seconds_max": round(max((a.cooldown_until - loop_now for a in cooling), default=0.0), 1),
+            "slot_leak_accounts": len(overcommitted),
         }
 
     async def generate(self, prompt: str, model: str, conversation_id: str = "",

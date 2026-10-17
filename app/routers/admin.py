@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from app.config import APP_VERSION, mask_secret, settings
@@ -115,7 +115,26 @@ async def admin_status():
     status["regenerations"] = regeneration_budget.stats()
     status["debug_metrics"] = debug_metrics.summary()
     status["agent_loop"]["fallback_model"] = settings.argon_fallback_model
+    status["slo"] = _slo_view()
     return status
+
+
+def _slo_view() -> dict:
+    """Operational view (ok / degraded / unknown) built from the bounded diagnostics.
+
+    Kept separate from ``admin_status`` so the same view can be reused by the
+    metrics exporter and by tests without going through HTTP.
+    """
+    from app.core.slo import build_slo
+
+    counters = debug_metrics.counters()
+    return build_slo(
+        windows=debug_metrics.window_summary(),
+        breaker=argon_breaker.snapshot(),
+        pool=account_pool.health_summary(),
+        budget=regeneration_budget.stats(),
+        lifetime_requests=int(counters.get("requests") or 0),
+    )
 
 
 @router.get("/debug-metrics")
@@ -125,6 +144,65 @@ async def debug_metrics_status():
         "summary": debug_metrics.summary(),
         "records": debug_metrics.records(limit=200),
     }
+
+
+@router.get("/config")
+async def admin_config():
+    """Effective runtime configuration, its sources and its drift.
+
+    Secret material is never rendered: for API keys and cookies only "configured"
+    and the source are reported. The values themselves come from the existing
+    settings schema, not from a second configuration system.
+    """
+    from app.core.config_diagnostics import build_config_report
+
+    return build_config_report(settings)
+
+
+@router.get("/debug-metrics/{request_id}")
+async def debug_metrics_request(request_id: str):
+    """Drill-down for one request ID: a correlated, redacted timeline.
+
+    Only bounded diagnostics are exposed -- never a request or response body, a
+    prompt, a cookie, an Authorization header or an account identifier.
+    """
+    from app.core.request_timeline import build_timeline
+
+    timeline = build_timeline(debug_metrics.record_by_id(request_id))
+    if timeline is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": {
+                    "message": "Request not found in the retained diagnostics buffer",
+                    "type": "not_found",
+                }
+            },
+        )
+    return {"request": timeline}
+
+
+@router.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus exposition of the same bounded, redacted diagnostics.
+
+    The admin JSON endpoint stays the source of truth for the web console; this is a
+    scrape-friendly rendering of it. It lives under ``/admin`` so it is protected by
+    the admin key (the global API key would otherwise expose operational internals to
+    every client of the business API).
+    """
+    from app.core.prometheus_metrics import CONTENT_TYPE, render_metrics
+
+    snapshot = {
+        "uptime_seconds": max(0.0, time.time() - _start_time),
+        "counters": debug_metrics.counters(),
+        "records": debug_metrics.records(limit=2000),
+        "windows": debug_metrics.window_summary(),
+        "breaker": argon_breaker.snapshot(),
+        "pool": account_pool.health_summary(),
+        "budget": regeneration_budget.stats(),
+    }
+    return Response(content=render_metrics(snapshot), media_type=CONTENT_TYPE)
 
 
 @router.post("/debug/tool-json")
@@ -246,6 +324,27 @@ async def check_single_account(account_id: str):
             status_code=404,
             content={"error": {"message": str(e), "type": "not_found"}},
         )
+
+
+class AccountStatusRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/accounts/{account_id}/status")
+async def set_account_status(account_id: str, req: AccountStatusRequest):
+    """Enable or disable one account.
+
+    The change is runtime-only (the credentials stay untouched) and is applied
+    immediately: a disabled account is no longer picked by the rotation.
+    """
+    try:
+        result = account_pool.set_account_enabled(account_id, req.enabled)
+    except ValueError as e:
+        return JSONResponse(
+            status_code=404,
+            content={"error": {"message": str(e), "type": "not_found"}},
+        )
+    return {"status": "ok", "account": result}
 
 
 class UpdateCookiesRequest(BaseModel):

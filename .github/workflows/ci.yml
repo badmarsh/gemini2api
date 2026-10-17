@@ -45,6 +45,69 @@ jobs:
       - name: Run tests (pytest)
         run: pytest
 
+  evals:
+    name: Eval Suite (offline)
+    runs-on: ubuntu-latest
+    # The eval suite lives outside `testpaths` (pytest only collects `tests/`),
+    # so it needs its own gate. It is fully offline: no upstream, no credentials.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run eval suite (pytest evals)
+        run: pytest evals -q -p no:cacheprovider
+
+  test-python-3-14:
+    name: Test (Python 3.14)
+    runs-on: ubuntu-latest
+    # Python 3.14 could not be executed in the authoring sandbox (no `py`
+    # launcher), so this job started as advisory. Its first real run was green
+    # (ruff + pytest on 3.14), so it is a hard gate now.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # pydantic 2.11.3 pins pydantic-core 2.33.2, which ships no cp314
+          # wheel: pip would have to build it from source, which needs a Rust
+          # toolchain. The 3.14 job therefore installs the pinned set with a
+          # pydantic that has cp314 wheels. requirements.txt itself stays
+          # untouched, and the test suite is green with the newer pydantic too.
+          sed 's/^pydantic==.*/pydantic>=2.12/' requirements.txt > /tmp/requirements-314.txt
+          pip install -r /tmp/requirements-314.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Run tests (pytest)
+        run: pytest
+
   dependency-audit:
     name: Dependency Audit (report-only)
     runs-on: ubuntu-latest
