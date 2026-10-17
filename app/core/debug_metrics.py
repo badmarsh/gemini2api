@@ -93,6 +93,7 @@ class DebugMetricsStore:
             "parser_response_length": int(record.get("parser_response_length") or 0),
             "parser_repaired": bool(record.get("parser_repaired")),
             "truncated_suspected": bool(record.get("truncated_suspected")),
+            "tags": [str(t) for t in (record.get("tags") or []) if isinstance(t, str)][:2],
         }
         with self._lock:
             self._records.append(safe)

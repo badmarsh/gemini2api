@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+### Added
+- **Request tagging via `X-G2A-Run` and `X-G2A-Role` headers.** When present, these headers are validated
+  against `^[A-Za-z0-9_.:-]+$` (max 64 chars) and recorded in `LogRecord.tags` and the debug metrics store
+  (up to 2 tags, e.g. run ID and caller role). Tags are searchable via `/admin/logs` and visible in
+  `/admin/debug-metrics`, enabling attribution between orchestrator, monitor, and agent requests without
+  per-agent API keys. Requests without these headers are unaffected.
+
 ### Fixed
 - **`/v1/responses` no longer returns Google's soft-error phrase as a successful reply.** The router computed
   `is_err_text` (stream and non-stream) and never read it, so with `ARGON_FALLBACK_TO_FLASH=false`, a non-Argon

@@ -457,6 +457,19 @@ def _add_debug_log(request: Request, response, *, path: str, method: str, model:
     parser_response_length = parse_diagnostic.get("response_length")
     parser_repaired = bool(parse_diagnostic.get("repaired"))
     truncated_suspected = bool(parse_diagnostic.get("truncated_suspected"))
+
+    tags = []
+    import re as _re_tag
+    _tag_pattern = _re_tag.compile(r"^[A-Za-z0-9_.:-]+$")
+    for _hdr in ("X-G2A-Run", "X-G2A-Role"):
+        _val = request.headers.get(_hdr)
+        if _val:
+            _val = _val.strip()
+            if 0 < len(_val) <= 64 and _tag_pattern.fullmatch(_val):
+                tags.append(_val)
+                if len(tags) == 2:
+                    break
+
     record = create_log_record(
         method=method,
         path=_scrub_sensitive(path),
@@ -468,6 +481,7 @@ def _add_debug_log(request: Request, response, *, path: str, method: str, model:
         error=(f"HTTP {status}" if status >= 400 else None),
         request_body=request_body,
         response_body=response_body,
+        tags=tags,
         ttft_ms=ttft_ms,
         total_latency_ms=total_ms,
         max_inter_chunk_gap_ms=max_gap_ms,
@@ -494,6 +508,7 @@ def _add_debug_log(request: Request, response, *, path: str, method: str, model:
         "status": status,
         "stream": bool(stream),
         "path": _scrub_sensitive(path),
+        "tags": tags,
         "ttft_ms": ttft_ms,
         "total_latency_ms": total_ms,
         "max_inter_chunk_gap_ms": max_gap_ms,

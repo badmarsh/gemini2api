@@ -64,6 +64,7 @@ class LogRecord:
             self.served_by or "",
             self.parser_failure or "",
             str(self.status) if self.status else "",
+            *(self.tags or []),
         ]
         return any(q in s.lower() for s in searchable)
 
@@ -211,6 +212,7 @@ def create_log_record(
     parser_repaired: bool = False,
     truncated_suspected: bool = False,
     ingress_ts: Optional[str] = None,
+    tags: Optional[list] = None,
 ) -> LogRecord:
     now = datetime.now(timezone.utc).isoformat()
     return LogRecord(
@@ -226,6 +228,7 @@ def create_log_record(
         latency_ms=round(latency_ms, 1) if latency_ms is not None else None,
         stream=stream,
         error=error,
+        tags=list(tags) if tags else [],
         ttft_ms=round(ttft_ms, 1) if ttft_ms is not None else None,
         total_latency_ms=round(total_latency_ms, 1) if total_latency_ms is not None else None,
         max_inter_chunk_gap_ms=round(max_inter_chunk_gap_ms, 1) if max_inter_chunk_gap_ms is not None else None,
