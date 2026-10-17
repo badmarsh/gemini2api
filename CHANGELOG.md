@@ -14,6 +14,10 @@ All notable changes to this project will be documented in this file. The format 
   per-agent API keys. Requests without these headers are unaffected.
 
 ### Fixed
+- **Image generation endpoint now uses the resolved model.** `POST /v1/images/generations` resolved
+  `model = _resolve_model(...)` but passed the raw, unresolved `req.model` string to
+  `gemini_client.generate()`, bypassing model alias and family mapping. It now passes the resolved model.
+  Audit item M.
 - **`/v1/responses` no longer returns Google's soft-error phrase as a successful reply.** The router computed
   `is_err_text` (stream and non-stream) and never read it, so with `ARGON_FALLBACK_TO_FLASH=false`, a non-Argon
   model, or an exhausted fallback, "Sorry, something went wrong..." came back as HTTP 200 / `response.completed`

@@ -901,7 +901,7 @@ async def images_generations(req: ImageGenerationRequest):
 
     model = _resolve_model(req.model or "gemini-pro")
     try:
-        result = await gemini_client.generate(prompt, req.model or "gemini-pro")
+        result = await gemini_client.generate(prompt, model)
     except UPSTREAM_ERRORS as e:
         return JSONResponse(status_code=500,
             content={"error": {"message": str(e), "type": "api_error"}})
