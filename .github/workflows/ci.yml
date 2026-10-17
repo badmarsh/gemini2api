@@ -95,7 +95,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          # pydantic 2.11.3 pins pydantic-core 2.33.2, which ships no cp314
+          # wheel: pip would have to build it from source, which needs a Rust
+          # toolchain. The 3.14 job therefore installs the pinned set with a
+          # pydantic that has cp314 wheels. requirements.txt itself stays
+          # untouched, and the test suite is green with the newer pydantic too.
+          sed 's/^pydantic==.*/pydantic>=2.12/' requirements.txt > /tmp/requirements-314.txt
+          pip install -r /tmp/requirements-314.txt -r requirements-dev.txt
 
       - name: Lint (ruff)
         run: ruff check .
