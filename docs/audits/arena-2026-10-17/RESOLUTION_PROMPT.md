@@ -4,6 +4,15 @@
 > It is self-contained: it states the verified starting point, the exact gaps with file/line
 > evidence, the non-negotiable repo conventions, the acceptance gates, and the order of work.
 
+> **Companion work order.** A second, external assessment of this repository was verified
+> separately and produced items **K–R** in `RESOLUTION_PROMPT_ASSESSMENT.md` — including three live
+> defects (K: `/v1/responses` reports upstream error phrases as success; L: dead `saw_frame`
+> protocol-drift blind spot; M: image endpoint bypasses model resolution). **Treat K as P0 and
+> sequence it with items A and B below** — K is a live correctness bug affecting every
+> `/v1/responses` caller today, so it belongs in the same first wave. The two work orders share the
+> same hard constraints and are designed to compose; L feeds item A's diagnostics work, and N (lint
+> widening) should only happen after K/L/M land, since `F841` is what flags them.
+
 ---
 
 ## Mission
@@ -18,8 +27,9 @@ labelled **A–H** below, plus one documentation correction (**I**) and one hygi
 audit listed as open (**SSRF / file-serving**) was proven **already implemented** — you must close
 it as a documentation/coverage correction, not re-implement it.
 
-Work in this order: **A → B → C → D → H → E → F → G**, then the correction **I** and the hygiene
-item **J**. A and B are P0 and must land first.
+Work in this order: **K → A → B → C → D → H → E → F → G**, then the correction **I** and the hygiene
+item **J**. **K** (from `RESOLUTION_PROMPT_ASSESSMENT.md`) joins **A** and **B** in the first wave:
+all three are P0, and K is the only one that is already mis-serving live traffic today.
 
 ---
 
